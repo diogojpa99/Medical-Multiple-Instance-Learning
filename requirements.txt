@@ -1,0 +1,9 @@
+torch==2.0.1
+torchvision==0.15.2
+timm==0.9.1
+torchprofile==0.0.4
+torchinfo==1.7.2
+lmdb==1.4.1
+einops==0.6.1
+wandb==0.15.3
+matplotlib==3.7.1
