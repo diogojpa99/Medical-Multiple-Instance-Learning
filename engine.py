@@ -104,20 +104,22 @@ def train_step(model: torch.nn.Module,
     train_loss, train_acc = 0, 0
     train_stats = {}
     lr_num_updates = epoch * len(dataloader)
+    preds = []
+    targs = []
 
     # Loop through data loader data batches
-    for batch_idx, (inputs, labels) in enumerate(dataloader):
+    for batch_idx, (input, target, input_idx, mask) in enumerate(dataloader):
         
-        # Send data to target device
-        inputs, labels = inputs.to(device), labels.to(device)
+        # Send data to device
+        input, target, mask = input.to(device), target.to(device), mask.to(device)
         
         # 1. Clear gradients
         optimizer.zero_grad()
 
         #with torch.cuda.amp.autocast():
-        scores = model(inputs) # 2.Forward pass
-        loss = criterion(scores, labels) # 3. Compute and accumulate loss
-
+        bag_prob = model(input, mask) # 2.Forward pass
+        loss = criterion(bag_prob, target) # 3. Compute and accumulate loss
+        
         train_loss += loss.item() 
         
         if loss_scaler is not None:
@@ -140,8 +142,11 @@ def train_step(model: torch.nn.Module,
             model_ema.update(model)
 
         # Calculate and accumulate accuracy metric across all batches
-        predictions = torch.argmax(torch.softmax(scores, dim=1), dim=1)
-        train_acc += (predictions == labels).sum().item()/len(scores)
+        predictions = torch.argmax(bag_prob, dim=1)
+        train_acc += (predictions == target).sum().item()/len(predictions)
+        
+        preds.append(predictions.cpu().numpy())
+        targs.append(target.cpu().numpy())
         
     # Adjust metrics to get average loss and accuracy per batch 
     train_loss = train_loss / len(dataloader)
@@ -155,6 +160,14 @@ def train_step(model: torch.nn.Module,
         wandb.log({"Train Loss":train_loss}, step=epoch)
         wandb.log({"Train Accuracy":train_acc},step=epoch)
         wandb.log({"Train LR":optimizer.param_groups[0]['lr']},step=epoch)
+        
+    # Compute Metrics
+    preds=np.concatenate(preds)
+    targs=np.concatenate(targs)
+    train_stats['confusion_matrix'], train_stats['f1_score'] = confusion_matrix(targs, preds), f1_score(targs, preds, average=None) 
+    train_stats['precision'], train_stats['recall'] = precision_score(targs, preds, average=None), recall_score(targs, preds, average=None)
+    train_stats['bacc'] = balanced_accuracy_score(targs, preds)
+    train_stats['acc1'], train_stats['loss'] = train_acc, train_loss
     
     return train_stats
 
@@ -166,32 +179,30 @@ def evaluation(model: torch.nn.Module,
                wandb=print,
                args=None):
     
-    #criterion = torch.nn.CrossEntropyLoss()
-
     # Switch to evaluation mode
     model.eval()
     
     preds = []
-    targets = []
+    targs = []
     test_loss, test_acc = 0, 0
     results = {}
     
-    for inputs, targets_ in dataloader:
+    for input, target , input_idxs, mask in dataloader:
         
-        inputs, targets_ = inputs.to(device, non_blocking=True), targets_.to(device, non_blocking=True)
+        input, target, mask = input.to(device, non_blocking=True), target.to(device, non_blocking=True), mask.to(device, non_blocking=True)
 
         # Compute output
         with torch.no_grad(), torch.inference_mode():
-            scores = model(inputs)
-            loss = criterion(scores, targets_)
+            bag_prob = model(input, None)
+            loss = criterion(bag_prob, target)
             test_loss += loss.item()
     
         # Calculate and accumulate accuracy
-        predictions = scores.argmax(dim=1)
-        test_acc += ((predictions == targets_).sum().item()/len(predictions))
+        predictions = torch.argmax(bag_prob, dim=1)
+        test_acc += ((predictions == target).sum().item()/len(predictions))
         
         preds.append(predictions.cpu().numpy())
-        targets.append(targets_.cpu().numpy())
+        targs.append(target.cpu().numpy())
 
     # Adjust metrics to get average loss and accuracy per batch 
     test_loss = test_loss/len(dataloader)
@@ -203,10 +214,10 @@ def evaluation(model: torch.nn.Module,
         
     # Compute Metrics
     preds=np.concatenate(preds)
-    targets=np.concatenate(targets)
-    results['confusion_matrix'], results['f1_score'] = confusion_matrix(targets, preds), f1_score(targets, preds, average=None) 
-    results['precision'], results['recall'] = precision_score(targets, preds, average=None), recall_score(targets, preds, average=None)
-    results['bacc'] = balanced_accuracy_score(targets, preds)
+    targs=np.concatenate(targs)
+    results['confusion_matrix'], results['f1_score'] = confusion_matrix(targs, preds), f1_score(targs, preds, average=None) 
+    results['precision'], results['recall'] = precision_score(targs, preds, average=None), recall_score(targs, preds, average=None)
+    results['bacc'] = balanced_accuracy_score(targs, preds)
     results['acc1'], results['loss'] = test_acc, test_loss
 
     return results

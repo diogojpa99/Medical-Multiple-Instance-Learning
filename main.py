@@ -1,10 +1,13 @@
-import data_setup, utils, mil, engine, ResNet, visualization
+import data_setup, utils, mil, engine, visualization
+import Feature_Extractors.ResNet as resnet
+import Feature_Extractors.DEiT as deit, Feature_Extractors.ViT as vit
 
 import torch
 import torch.backends.cudnn as cudnn
 from timm.optim import create_optimizer
 from timm.utils import get_state_dict, ModelEma, NativeScaler
-from timm.scheduler import create_scheduler, CosineLRScheduler
+from timm.scheduler import create_scheduler
+from timm.models import create_model
 import torch.optim as optim
 
 
@@ -26,6 +29,7 @@ def get_args_parser():
     parser.add_argument('--data_path', default='', help='path to input file')
     parser.add_argument('--seed', default=42, type=int, help='random seed')
     parser.add_argument('--gpu', default='cuda:1', help='GPU id to use.')
+    parser.add_argument('--dataset_name', default='ISIC2019-Clean', type=str, metavar='DATASET')
     
     # Wanb parameters
     parser.add_argument('--project_name', default='Thesis', help='name of the project')
@@ -51,16 +55,26 @@ def get_args_parser():
     parser.add_argument('--dropout', type=float, default=0.0, help='Dropout rate (default: 0.0)')
         
     # MIL parameters
-    parser.add_argument('--pooling_type', default='max', choices=['max', 'avg', 'topk'], type=str, help="")
+    parser.add_argument('--pooling_type', default='max', choices=['max', 'avg', 'topk', 'mask_avg', 'mask_max'], type=str, help="")
     parser.add_argument('--mil_type', default='instance', choices=['instance', 'attention', 'embedding'], type=str, help="")
     parser.add_argument('--topk', default=25, type=int, help='topk for topk pooling')
     
-    # Pretrained parameters
-    parser.add_argument('--pretrained_feature_extractor_path', default='https://download.pytorch.org/models/resnet18-5c106cde.pth', 
-                        type=str, help="")
+    # Feature Extractor parameters
+    parser.add_argument('--pretrained_feature_extractor_path', default='https://download.pytorch.org/models/resnet18-5c106cde.pth', type=str, 
+                        choices=['https://download.pytorch.org/models/resnet18-5c106cde.pth', 
+                                 'https://download.pytorch.org/models/resnet50-19c8e357.pth', 
+                                 'https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth',
+                                 'https://dl.fbaipublicfiles.com/deit/deit_base_patch16_224-b5f2ef4d.pth'], 
+                        metavar='PATH', help="Download the pretrained feature extractor from the given path.")
+    
     parser.add_argument('--feature_extractor_pretrained_dataset', default='ImageNet1k', type=str, metavar='DATASET')
-    parser.add_argument('--feature_extractor_pretrained_model_name', default='resnet18', type=str, metavar='MODEL')
-    parser.add_argument('--dataset_name', default='ISIC2019-Clean', type=str, metavar='DATASET')
+    parser.add_argument('--feature_extractor', default='resnet18.tv_in1k', type=str, metavar='MODEL',
+                        choices=['resnet18.tv_in1k', 
+                                 'resnet50.tv_in1k', 
+                                 'deit_small_patch16_224', 
+                                 'deit_base_patch16_224',], 
+                        help='Feature Extractor model architecture (default: "resnet18")')
+
         
     # Evaluation parameters
     parser.add_argument('--evaluate', action='store_true', default=False, help='evaluate model on validation set')
@@ -171,20 +185,25 @@ def get_args_parser():
     parser.add_argument('--recount', type=int, default=1, help='Random erase count (default: 1)')
     parser.add_argument('--resplit', action='store_true', default=False, help='Do not random erase first (clean) augmentation split')
     
-    # Loss scaler
+    # Loss scaler parameters
     parser.add_argument('--loss_scaler', action='store_true', default=False, help='Use loss scaler')
-         
+
+    # Segmentation Mask parameters
+    parser.add_argument('--mask', action='store_true', default=False, help='Use segmentation mask')
+    parser.add_argument('--mask_path', default='', type=str, help='path to segmentation mask')
+    parser.add_argument('--mask_is_train_path', default='train', type=str, help='path to multiclass segmentation mask')
+    
     return parser
 
 def main(args):
 
     # Start a new wandb run to track this script
-    wandb = print
+    #wandb = print
     if args.wandb:
         wandb.init(
             project=args.project_name,
             config={
-            "Feature Extractor model": args.feature_extractor_pretrained_model_name,
+            "Feature Extractor model": args.feature_extractor,
             "Feature Extractor dataset": args.feature_extractor_pretrained_dataset,
             "Model": "MIL", "MIL type": args.mil_type,
             "Pooling": args.pooling_type, "Topk": args.topk,
@@ -219,13 +238,10 @@ def main(args):
     
     ################## Data Setup ##################
     if args.data_path:
-        if args.batch_aug:
-            train_set, args.nb_classes = data_setup.build_dataset(is_train=True, args=args)
-            val_set,_ = data_setup.build_dataset(is_train=False, args=args)
-        else:
-            train_set, args.nb_classes = data_setup.build_dataset_simple(is_train=True, args=args)
-            val_set,_ = data_setup.build_dataset_simple(is_train=False, args=args)
-            
+    
+        train_set, args.nb_classes = data_setup.build_dataset(is_train=True, args=args)
+        val_set,_ = data_setup.build_dataset(is_train=False, args=args)
+        
         ## Data Loaders 
         sampler_train = torch.utils.data.RandomSampler(train_set)
         sampler_val = torch.utils.data.SequentialSampler(val_set)
@@ -247,32 +263,107 @@ def main(args):
      
     ############################ Define the Feature Extractor ############################
     
-    feature_extractor = ResNet.ResNet(block=ResNet.BasicBlock, 
-                                      layers=[2, 2, 2], 
-                                      desired_output_size=(args.input_size // args.patch_size))
-    feature_extractor.to(device)
+    num_chs = 256
+    
+    if args.feature_extractor == 'resnet18.tv_in1k':
+
+        """ feature_extractor = ResNet.ResNet(block=ResNet.BasicBlock, 
+                                          layers=[2, 2, 2], 
+                                          desired_output_size=(args.input_size // args.patch_size)) """
+                                                  
+        model_args = dict(block=resnet.BasicBlock, 
+                          layers=[2, 2, 2], 
+                          desired_output_size=(args.input_size // args.patch_size),
+                          drop_rate=args.dropout,
+                          drop_path_rate=0.,
+                          drop_block_rate=0.,
+                          feature_extractor=True)
         
-    ############################ Define the Model ############################
+    elif args.feature_extractor == 'resnet50.tv_in1k':
+        
+        model_args = dict(block=resnet.Bottleneck, 
+                          layers=[3, 4, 6], 
+                          desired_output_size=(args.input_size // args.patch_size),
+                          drop_rate=args.dropout,
+                          drop_path_rate=0.,
+                          drop_block_rate=0.,
+                          feature_extractor=True)
+                
+    elif args.feature_extractor == 'deit_small_patch16_224':
+        
+        num_chs = 384
+        model_args = dict(img_size=args.input_size,
+                          patch_size=args.patch_size,
+                          embed_dim=num_chs, 
+                          depth=12, 
+                          num_heads=6,
+                          drop_rate=args.dropout,
+                          drop_path_rate=0.,
+                          attn_drop_rate=0.2,
+                          feature_extractor=True)
+        
+        
+    elif args.feature_extractor == 'deit_base_patch16_224':
+
+        num_chs = 768
+        model_args = dict(img_size=args.input_size,
+                          patch_size=args.patch_size,
+                          embed_dim=num_chs, 
+                          depth=12, 
+                          num_heads=12,
+                          drop_rate=args.dropout,
+                          drop_path_rate=0.,
+                          attn_drop_rate=0.,
+                          feature_extractor=True)
+    
+    elif args.feature_extractor == 'vgg16': 
+        
+        raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
+    
+    else:
+        raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
+        
+
+    feature_extractor = create_model(model_name=args.feature_extractor,
+                                     pretrained=False, 
+                                     **dict(model_args))
+    
+    if args.feature_extractor=='resnet18.tv_in1k' or args.feature_extractor=='resnet50.tv_in1k':
+
+        if feature_extractor.feature_info[-1]['module'] == 'layer3':
+            num_chs = feature_extractor.feature_info[-1]['num_chs']
+            
+    elif args.feature_extractor=='vgg16':
+        raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
+    
+    feature_extractor.to(device)
+            
+    ############################ Define the MIL Model ############################
         
     if args.mil_type == 'instance':
+        
         model = mil.InstanceMIL(num_classes=args.nb_classes, 
-                                    N=(args.input_size // args.patch_size)**2,
-                                    dropout=args.dropout,
-                                    pooling_type=args.pooling_type,
-                                    device=device,
-                                    args=args,
-                                    patch_extractor=feature_extractor)
+                                N=(args.input_size // args.patch_size)**2,
+                                embedding_size=num_chs,
+                                dropout=args.dropout,
+                                pooling_type=args.pooling_type,
+                                device=device,
+                                args=args,
+                                patch_extractor=feature_extractor)
+        
     elif args.mil_type == 'embedding':
+        
         model = mil.EmbeddingMIL(num_classes=args.nb_classes, 
-                                    N=(args.input_size // args.patch_size)**2,
-                                    dropout=args.dropout,
-                                    pooling_type=args.pooling_type,
-                                    device=device,
-                                    args=args,
-                                    patch_extractor=feature_extractor)
+                                N=(args.input_size // args.patch_size)**2,
+                                embedding_size=num_chs,
+                                dropout=args.dropout,
+                                pooling_type=args.pooling_type,
+                                device=device,
+                                args=args,
+                                patch_extractor=feature_extractor)
+        
     elif args.mil_type == 'attention':
-        print('IMPLEMENT ME!') # ------------------------------------------------------------
-        return
+        raise NotImplementedError('This MIL implementation does not support this MIL type..yet!')
         
     ## Implement -> If finetune_ckpt then load the weights of the model
     # Only then can I do model.to(device) and model_ema.to(device)
@@ -292,12 +383,11 @@ def main(args):
     if args.data_path:
         
         # Number of parameters
-        """ n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"Number of parameters: {n_parameters}\n") """
+        n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Number of parameters: {n_parameters}\n")
         
         # (1) Define the class weights
-        #class_weights = utils.Class_Weighting(train_set, val_set, device, args)
-        class_weights = None
+        class_weights = utils.Class_Weighting(train_set, val_set, device, args)
         
         # (2) Define the optimizer
         optimizer = create_optimizer(args=args, model=model)
@@ -313,7 +403,7 @@ def main(args):
             if args.sched == 'exp':
                 lr_scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.decay_rate)
             else:    
-                lr_scheduler, _ = create_scheduler(args, optimizer)
+                lr_scheduler,_ = create_scheduler(args, optimizer)
         
         # (4) Define the loss function with class weighting
         #criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
@@ -328,7 +418,7 @@ def main(args):
         if args.visualize:
             print('----------------- Visualization -------------------')
             if args.mil_type == 'instance':
-                if args.pooling_type == 'max':
+                if args.pooling_type == 'max' or args.pooling_type == 'mask_max':
                     visualization.Visualize_Most_Relevant_Patch_InstanceMax(model=model, datapath=args.images_path, outputdir=output_dir, args=args)
                 else:
                     visualization.Visualize_Most_Relevant_Patches(model=model, datapath=args.images_path, outputdir=output_dir, args=args)
@@ -381,7 +471,7 @@ def main(args):
         # Define Early Stopping
         early_stopping = engine.EarlyStopping(patience=args.patience, verbose=True, delta=args.delta, path=str(output_dir) +'/checkpoint.pth')
        
-        print("--------------------- Training ------------------------") 
+        print(f"--------------------- Start training for {(args.epochs + args.cooldown_epochs)} epochs. ------------------------") 
         for epoch in range(args.start_epoch, (args.epochs + args.cooldown_epochs)):
             
             if epoch < args.classifier_warmup_epochs and freeze_patch_extractor_flag == False:
@@ -433,7 +523,7 @@ def main(args):
             if results['bacc'] > best_val_bacc and early_stopping.counter < args.counter_saver_threshold:
                 # Only want to save the best checkpoints if the best val bacc and the early stopping counter is less than the threshold
                 best_val_bacc = results['bacc']
-                checkpoint_paths = [output_dir / f'MIL-{args.mil_type}-{args.pooling_type}-aLaDeit-best_checkpoint.pth']
+                checkpoint_paths = [output_dir / f'MIL-{args.mil_type}-{args.pooling_type}-best_checkpoint.pth']
                 best_results = results
                 for checkpoint_path in checkpoint_paths:
                     checkpoint_dict = {
@@ -482,6 +572,12 @@ def main(args):
             with (output_dir / "log.txt").open("a") as f:
                 f.write('\n'.join(log_args) + '\n' + '\n'.join(str(item) for item in log_list) + '\n' + '\n'.join(log_test_stats) + '\n') """
                 
+        print('\n---------------- Train stats for the last epoch ----------------\n',
+            f"Acc: {train_stats['acc1']:.3f} | Bacc: {train_stats['bacc']:.3f} | F1-score: {np.mean(train_stats['f1_score']):.3f} | \n",
+            f"Precision[MEL]: {train_stats['precision'][0]:.3f} | Precision[NV]: {train_stats['precision'][1]:.3f} | \n",
+            f"Recall[MEL]: {train_stats['recall'][0]:.3f} | Recall[NV]: {train_stats['recall'][1]:.3f} | \n",
+            f'Confusion Matrix: {train_stats["confusion_matrix"]}\n')
+
         print('\n---------------- Val. stats for the best model ----------------\n',
             f"Acc: {best_results['acc1']:.3f} | Bacc: {best_results['bacc']:.3f} | F1-score: {np.mean(best_results['f1_score']):.3f} | \n",
             f"Precision[MEL]: {best_results['precision'][0]:.3f} | Precision[NV]: {best_results['precision'][1]:.3f} | \n",

@@ -73,8 +73,8 @@ def Visualize_Most_Relevant_Patch_InstanceMax(model: torch.nn.Module, datapath, 
     fig, axs = plt.subplots(3, len(image_files), figsize=(4 * len(image_files), 13))
     
     # Transform the images for the model
-    transform = transforms.Compose(
-    [   transforms.Resize(size=(224, 224)),
+    transform = transforms.Compose([   
+        #transforms.Resize(size=(224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD)
     ])
@@ -90,19 +90,18 @@ def Visualize_Most_Relevant_Patch_InstanceMax(model: torch.nn.Module, datapath, 
         model.eval()
         
         # (4) Obtain the bag scores
-        bag_score = model(input)
-        predicted_class =int(torch.argmax(bag_score))
+        bag_prob = model(input)
+        predicted_class = int(torch.argmax(bag_prob))
                     
-        # (5) obtain the instance scores
-        instance_scores = model.patch_scores
+        # (5) obtain the instance softmax scores
+        patch_prob = model.get_patch_probs()
         
-        # (6) Obtain probabilities (Softmax) & Transform to (batch_size, num_classes, 14, 14)
-        prob = torch.softmax(instance_scores, dim=1)  # Softmax over the patches,i.e, see the most relevant patches for the predicted class
-        prob = prob.permute(0, 2, 1)
-        prob = prob.reshape(1, 2, 14, 14)
+        # (6) Transform to (batch_size, num_classes, 14, 14)
+        patch_prob_map = patch_prob.permute(0, 2, 1)
+        patch_prob_map = patch_prob_map.reshape(1, 2, 14, 14)
         
         # (7) Obtain the key patch
-        instances_map = instance_scores[:,:,predicted_class].squeeze(0) # Get the instance scores for the predicted class
+        instances_map = patch_prob[:,:,predicted_class].squeeze(0) # Get the instance scores for the predicted class
         key_patch_idx = int(torch.argmax(instances_map)) # Get the index of the key patch
         instances_map.zero_() # Set all the patches to 0
         instances_map[key_patch_idx] = 1 # Set the key patch to 1
@@ -114,7 +113,7 @@ def Visualize_Most_Relevant_Patch_InstanceMax(model: torch.nn.Module, datapath, 
         cv2.rectangle(key_patch, (top_left_x, top_left_y), (bottom_right_x, bottom_right_y), (0, 255, 0), 2)
 
         # (8) Obtain the activtion map for the predicted class
-        activation_map = prob[:,predicted_class, :, :].unsqueeze(0)
+        activation_map = patch_prob_map[:,predicted_class, :, :].unsqueeze(0)
         heatmap = torch.nn.functional.interpolate(activation_map, scale_factor=(224//14), mode='bilinear', align_corners=True)  #14->224
         heatmap = heatmap.reshape(224, 224).data.cpu().numpy() 
         heatmap = (heatmap - np.min(heatmap)) / (np.max(heatmap) - np.min(heatmap))
@@ -141,7 +140,7 @@ def Visualize_Most_Relevant_Patch_InstanceMax(model: torch.nn.Module, datapath, 
 
         # Plot the heatmap overlay
         axs[2, i].imshow(vis)
-        axs[2, i].set_title("Normalized Activation Map")
+        axs[2, i].set_title("'Attention' Map")
         axs[2, i].axis('off');
         
         # Plot the original 14x14 heatmap
@@ -159,8 +158,8 @@ def Visualize_Most_Relevant_Patches(model: torch.nn.Module, datapath, outputdir 
     fig, axs = plt.subplots(2, len(image_files), figsize=(4 * len(image_files), 8.5))
 
     # Transform the images for the model
-    transform = transforms.Compose(
-    [   transforms.Resize(size=(224, 224)),
+    transform = transforms.Compose([   
+        #transforms.Resize(size=(224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD)
     ])
@@ -176,20 +175,18 @@ def Visualize_Most_Relevant_Patches(model: torch.nn.Module, datapath, outputdir 
         model.eval()
         
         # (4) Obtain the bag scores
-        bag_score = model(input)
-        predicted_class =int(torch.argmax(bag_score))
-                
-        # (5) obtain the instance scores
-        instance_scores = model.patch_scores 
+        bag_prob = model(input)
+        predicted_class = int(torch.argmax(bag_prob))
+                    
+        # (5) obtain the instance softmax scores
+        patch_prob = model.get_patch_probs()
         
-        # (6) Obtain probabilities (Softmax) & Transform to (batch_size, num_classes, 14, 14)
-        prob = torch.softmax(instance_scores, dim=1)  # Softmax over the patches,i.e, see the most relevant patches for the predicted class 
-        #prob = instance_scores
-        prob = prob.permute(0, 2, 1)
-        prob = prob.reshape(1, 2, 14, 14)
+        # (6) Transform to (batch_size, num_classes, 14, 14)
+        patch_prob_map = patch_prob.permute(0, 2, 1)
+        patch_prob_map = patch_prob_map.reshape(1, 2, 14, 14)
         
         # (7) Obtain the activtion map for the predicted class
-        activation_map = prob[:,predicted_class, :, :].unsqueeze(0)
+        activation_map = patch_prob_map[:,predicted_class, :, :].unsqueeze(0)
         
         heatmap = torch.nn.functional.interpolate(activation_map, scale_factor=(224//14), mode='bilinear',align_corners=True)  #14->224
         heatmap = heatmap.reshape(224, 224).data.cpu().numpy() 
@@ -213,7 +210,7 @@ def Visualize_Most_Relevant_Patches(model: torch.nn.Module, datapath, outputdir 
 
         # Plot the heatmap overlay
         axs[1, i].imshow(vis)
-        axs[1, i].set_title("Normalized Activation Map")
+        axs[1, i].set_title("'Attention' Map")
         axs[1, i].axis('off');
         
         # Plot the original 14x14 heatmap
@@ -238,8 +235,8 @@ def Visualize_ActivationMap(model: torch.nn.Module, datapath, outputdir = None, 
     fig, axs = plt.subplots(3, len(image_files), figsize=(4 * len(image_files), 13))
 
     # Transform the images for the model
-    transform = transforms.Compose(
-    [   transforms.Resize(size=(224, 224)),
+    transform = transforms.Compose([   
+        #transforms.Resize(size=(224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD)
     ])
@@ -255,24 +252,22 @@ def Visualize_ActivationMap(model: torch.nn.Module, datapath, outputdir = None, 
         model.eval()
         
         # (4) Obtain the bag scores
-        bag_score = model(input)
-        predicted_class =int(torch.argmax(bag_score))
-            
-        # (5) obtain the instance scores
-        instance_scores = model.patch_scores 
+        bag_prob = model(input)
+        predicted_class = int(torch.argmax(bag_prob))
+                    
+        # (5) obtain the instance softmax scores
+        patch_prob = model.get_patch_probs()
         
-        # (6) Obtain probabilities (Softmax) & Transform to (batch_size, num_classes, 14, 14)
-        prob = torch.softmax(instance_scores, dim=2)
-        prob = prob.permute(0, 2, 1)
-        prob = prob.reshape(1, 2, 14, 14)
+        # (6) Transform to (batch_size, num_classes, 14, 14)
+        patch_prob_map = patch_prob.permute(0, 2, 1)
+        patch_prob_map = patch_prob_map.reshape(1, 2, 14, 14)
         
-        # (7) Obtain the activtion map for the predicted class
-        activation_map = prob[:,0, :, :].unsqueeze(0)
+        # (7) Obtain the activtion map for the Melanoma class (Mel: 0, NV: 1)
+        activation_map = patch_prob_map[:,0, :, :].unsqueeze(0)
         
         # (8) Overlay the heatmap on the original image
         heatmap = torch.nn.functional.interpolate(activation_map, scale_factor=(224//14), mode='bilinear',align_corners=True)  #14->224
         heatmap = heatmap.reshape(224, 224).data.cpu().numpy() 
-        heatmap = np.clip(heatmap, 0, 1) # Testar Sem o Clip
         heatmap = cv2.applyColorMap(np.uint8(heatmap* 255), cv2.COLORMAP_JET)
         
         img = input.permute(0, 2, 3, 1).squeeze(0).data.cpu().numpy()
@@ -286,7 +281,7 @@ def Visualize_ActivationMap(model: torch.nn.Module, datapath, outputdir = None, 
         vis = cv2.cvtColor(np.array(vis), cv2.COLOR_RGB2BGR)
         
         # Grad CAM
-        grad_cam = Grad_CAM(input,model,bag_score,0, img)
+        grad_cam = Grad_CAM(input,model,bag_prob,0, img)
         
         # Plot the original image
         axs[0, i].imshow(image)
@@ -295,7 +290,7 @@ def Visualize_ActivationMap(model: torch.nn.Module, datapath, outputdir = None, 
 
         # Plot the heatmap overlay
         axs[1, i].imshow(vis)
-        axs[1, i].set_title("Activation Map (0-1)")
+        axs[1, i].set_title("Probability Heatmap")
         axs[1, i].axis('off');
         
         # Plot the original 14x14 heatmap
@@ -303,10 +298,10 @@ def Visualize_ActivationMap(model: torch.nn.Module, datapath, outputdir = None, 
         axs[2, i].set_title("Grad-CAM")
         axs[2, i].axis('off');
                     
-    title = f"| 'MEL' Class Activation Map | MIL Type: {args.mil_type} | Pooling Type: {args.pooling_type} | "
+    title = f"| 'MEL' Class Probability Heatmap | MIL Type: {args.mil_type} | Pooling Type: {args.pooling_type} | "
     plt.suptitle(title, fontsize=20)
     plt.subplots_adjust(wspace=0.1, hspace=0.1)
-    plt.savefig(str(outputdir) + f'/MIL-{args.mil_type}-{args.pooling_type}-Heatmap_01-MEL.jpg', dpi=300, bbox_inches='tight')
+    plt.savefig(str(outputdir) + f'/MIL-{args.mil_type}-{args.pooling_type}-Probabilities-MEL.jpg', dpi=300, bbox_inches='tight')
 
 def Visualize_Embedding_ActivationMap(model: torch.nn.Module, datapath, outputdir = None, args = None):
     
@@ -314,8 +309,8 @@ def Visualize_Embedding_ActivationMap(model: torch.nn.Module, datapath, outputdi
     fig, axs = plt.subplots(3, len(image_files), figsize=(4 * len(image_files), 13))
 
     # Transform the images for the model
-    transform = transforms.Compose(
-    [   transforms.Resize(size=(224, 224)),
+    transform = transforms.Compose([   
+        #transforms.Resize(size=(224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD)
     ])
@@ -331,15 +326,15 @@ def Visualize_Embedding_ActivationMap(model: torch.nn.Module, datapath, outputdi
         model.eval()
         
         # (4) Obtain the bag scores
-        bag_score = model(input)
-        predicted_class =int(torch.argmax(bag_score))
+        bag_probs = model(input)
+        predicted_class =int(torch.argmax(bag_probs))
         
         img = input.permute(0, 2, 3, 1).squeeze(0).data.cpu().numpy()
         img = (img - np.min(img)) / (np.max(img) - np.min(img))
         
         # Grad CAM
-        grad_cam_mel = Grad_CAM(input,model,bag_score,0, img)
-        grad_cam_nv = Grad_CAM(input,model,bag_score,1,img)
+        grad_cam_mel = Grad_CAM(input,model,bag_probs,0, img)
+        grad_cam_nv = Grad_CAM(input,model,bag_probs,1,img)
         
         # Plot the original image
         axs[0, i].imshow(image)
@@ -367,8 +362,8 @@ def Visualize_Instance_Scores_indv(model: torch.nn.Module, datapath, outputdir =
     image_1 = Image.open(datapath)
     
     # (2) transform the images
-    transform = transforms.Compose(
-    [   transforms.Resize(size=(224, 224)),
+    transform = transforms.Compose([   
+        #transforms.Resize(size=(224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD)
     ])
@@ -385,7 +380,7 @@ def Visualize_Instance_Scores_indv(model: torch.nn.Module, datapath, outputdir =
     # (5) obtain the instance scores
     instance_scores = model.patch_scores 
     
-    # (6) Obtain probabilities (Softmax) & Transform to (batch_size, num_classes, 14, 14)
+    # (6) Transform to (batch_size, num_classes, 14, 14)
     prob = torch.softmax(instance_scores, dim=1)
     prob = prob.permute(0, 2, 1)
     prob = prob.reshape(1, 2, 14, 14)

@@ -2,8 +2,8 @@ now=$(date +"%Y%m%d_%H%M%S")
 logdir="visualization"
 datapath="Images/"
 
-inst="embedding"
-pool="max"
+inst="instance"
+pool="mask_max"
 
 ckpt="Pretrained_Models/MIL_$inst-Pool_$pool/best_checkpoint.pth"
 

@@ -1,4 +1,4 @@
-import data_setup, utils, mil, engine, ResNet, visualization
+import data_setup, utils, mil, engine, Feature_Extractors.ResNet as ResNet, visualization
 
 import torch
 import torch.backends.cudnn as cudnn

@@ -1,10 +1,80 @@
 import os
+from PIL import Image
 
+import torch
 import torchvision.transforms as transforms
-from torchvision import datasets, transforms
+from torchvision import transforms
+from torch.utils.data import Dataset
+from torchvision.datasets.folder import find_classes
 
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.data import create_transform
+
+
+class ISIC2019_Dataset(Dataset):
+    
+    def __init__(self, 
+                 image_dir, 
+                 mask_dir=None, 
+                 is_train=True, 
+                 img_transform=None, 
+                 mask_transform=None):
+        
+        self.image_dir = image_dir
+        self.is_train = is_train
+        if self.is_train:
+            self.mask_dir = mask_dir
+        else:
+            self.mask_dir = None 
+        self.mask_transform = mask_transform
+        self.img_transform = img_transform
+        self.idx = []
+        self.targets = []
+        self.classes, self.class_to_idx = find_classes(self.image_dir)
+        
+        for label in os.listdir(self.image_dir):
+
+            label_dir = os.path.join(self.image_dir, label)
+            label_idx = self.classes.index(label)
+            
+            for img_name in os.listdir(label_dir):
+                
+                img_idx = img_name[:12] # This is specific for ISIC2019
+                img_path = os.path.join(label_dir, img_name)
+                
+                if self.mask_dir is not None:
+                    mask_path = os.path.join(self.mask_dir, label, f"{img_idx}.png")
+                else:
+                    mask_path = None
+                    
+                self.idx.append((img_path, label_idx, img_idx, mask_path))
+                self.targets.append(label_idx)
+                
+    def __len__(self):
+        return len(self.idx)                    
+
+    def __getitem__(self, index):
+        
+        img_path, label, img_idx, mask_path = self.idx[index]
+        img = Image.open(img_path)
+        img = self.img_transform(img)
+        
+        if mask_path is not None:
+            mask = Image.open(mask_path).convert('L')
+            mask = self.mask_transform(mask)
+            mask = ~mask.bool()
+            mask = mask.float()
+        else:
+            mask = torch.zeros((1, img.shape[1], img.shape[2]))
+    
+        return img, label, img_idx, mask
+
+def replace_values(x):
+    """ 
+        Function to replace values in a tensor with 0 or 1. Needed for the mask.
+        Some values in the mask are not exactly 0 or 1, but very close to it.
+    """
+    return torch.where(x < 0.5, torch.tensor(0, dtype=torch.float32), torch.tensor(1, dtype=torch.float32))
 
 def build_transform(is_train, args):
     resize_im = args.input_size > 32
@@ -28,7 +98,7 @@ def build_transform(is_train, args):
         return transform
 
     t = []
-    if resize_im:
+    if resize_im and args.input_size != 224:
         size = int((256 / 224) * args.input_size)
         t.append(
             transforms.Resize(size, interpolation=3),  # to maintain same ratio w.r.t. 224 images
@@ -40,24 +110,36 @@ def build_transform(is_train, args):
     return transforms.Compose(t)
 
 def build_dataset(is_train, args):
+    
+    img_root = os.path.join(args.data_path, 'train' if is_train else 'val')
+            
+    if args.batch_aug:
+        img_transform = build_transform(is_train, args)
+    else:
+        img_transform = transforms.Compose([   
+            #transforms.Resize(size=(224, 224)), # Input images are already 224x224
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD)
+        ])
+    
+    if args.mask:
+        mask_root = os.path.join(args.mask_path, args.mask_is_train_path if is_train else '')
+        mask_transform = transforms.Compose([
+            #transforms.Resize(int((256 / 224) * args.input_size), interpolation=3),
+            #transforms.Resize(size=(args.input_size, args.input_size)), # Equivalent to above if input_size=224
+            #transforms.CenterCrop(args.input_size),
+            transforms.ToTensor(),
+            transforms.Lambda(replace_values)
+        ])
+    else:
+        mask_root = None
+        mask_transform = None
         
-    transform = build_transform(is_train, args)
-    root = os.path.join(args.data_path, 'train' if is_train else 'val')
-    dataset = datasets.ImageFolder(root, transform=transform)
+    dataset = ISIC2019_Dataset(image_dir = img_root,
+                                mask_dir = mask_root, 
+                                is_train = is_train,
+                                img_transform=img_transform,
+                                mask_transform=mask_transform)
     nb_classes = len(dataset.classes)
-    
-    return dataset, nb_classes
-
-def build_dataset_simple(is_train, args):
-        
-    transform = transforms.Compose(
-    [   transforms.Resize(size=(224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD)
-    ])
-    
-    root = os.path.join(args.data_path, 'train' if is_train else 'val')
-    dataset = datasets.ImageFolder(root, transform=transform)
-    nb_classes = len(dataset.classes)
-    
+            
     return dataset, nb_classes

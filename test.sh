@@ -2,12 +2,12 @@ now=$(date +"%Y%m%d_%H%M%S")
 logdir=""
 datapath="../Datasets/derm7pt_like_ISIC2019"
 
-inst="instance"
-pool="max"
+inst="embedding"
+pool="mask_avg"
 
 ckpt="Pretrained_Models/MIL_$inst-Pool_$pool/best_checkpoint.pth"
 
-logdir="MIL-$inst-$pool-Test_PH2_test-Time_$now"
+logdir="MIL-$inst-$pool-Test_derm7pt_test-Time_$now"
 echo "----------------- Output dir: $logdir --------------------"
 
 python main.py \

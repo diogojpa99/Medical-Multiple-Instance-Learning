@@ -13,7 +13,7 @@ import torchvision.utils as vutils
 import torch.serialization
 import torch.distributed as dist
 from torchinfo import summary
-
+import torch.nn.functional as F
 
 def Plot_TrainSet(trainset, args):
     
@@ -287,3 +287,22 @@ def Load_Pretrained_MIL_Model(path, model, args):
         del checkpoint['model'][k]
             
     model.load_state_dict(checkpoint['model'])
+    
+
+def Mask_Setup(mask):
+    """ 
+    This function transforms the a binary mask shape (Batch_size, 1, 224, 224) into a mask of shape (Batch_size, N).
+    If the Segmentation only contains zeros, the mask is transformed into a mask of ones.
+    
+    Input: mask of shape (Batch_size, 1, 224, 224)
+    Returns: mask of shape (Batch_size, N)
+    """
+        
+    mask = F.max_pool2d(mask, kernel_size=16, stride=16)  # Transform Mask into shape (Batch_size, 1, 14, 14)
+    mask = mask.reshape(mask.size(0), mask.size(2)*mask.size(3)) # Reshape mask to shape (Batch_size, N)
+    
+    for i in range (len(mask)):
+        if len(torch.unique(mask[i])) == 1:
+            mask[i] = torch.ones_like(mask[i])
+        
+    return mask
