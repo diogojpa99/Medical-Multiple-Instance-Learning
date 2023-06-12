@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils import Mask_Setup
-
 class MlpCLassifier(nn.Module):
     
     def __init__(self, in_features, out_features, dropout=0.0):
@@ -144,14 +142,16 @@ class EmbeddingMIL(nn.Module):
             Where N = 14*14 = 196 (If we consider 16x16 patches)
         '''
         
-        # (1) Use a CNN to extract the features | output : (batch_size, embedding_size, 14, 14)
+        # (1) Extract features from the Images 
         x = self.patch_extractor(x)
         
         if self.patch_extractor_model == "deit_small_patch16_224" or self.patch_extractor_model == "deit_base_patch16_224":
-            # DEiT models return a tensor with shape (batch_size, embedding_size, N)
-            # We need to reshape it to (batch_size, N, 14,14) in order to then use grad-cam
+            """ DEiT models return a tensor with shape (batch_size, embedding_size, N)
+            We need to reshape it to (batch_size, embedding_size, 14, 14) in order to then use grad-cam """
+            batch_size = x.size(0)
+            x = x[:,1:,:] # Remove the CLS token of the patch sequence
             x = x.permute(0, 2, 1)
-            x = x.reshape(1, 2, 14, 14)
+            x = x.reshape(batch_size, self.embedding_size, 14, 14)
 
         # Register Hook
         if x.requires_grad == True:
@@ -188,7 +188,7 @@ class EmbeddingMIL(nn.Module):
         x = self.LogSoftmax(x)
 
         return x #(Batch_size, num_classes)
-       
+    
 class InstanceMIL(nn.Module):
     
     def __init__(self, 
@@ -326,14 +326,16 @@ class InstanceMIL(nn.Module):
             Where N = 14*14 = 196 (If we consider 16x16 patches)
         '''
         
-        # (1) Use a CNN to extract the features | output : (batch_size, embedding_size, 14, 14)
+        # (1) Extract features from the Images 
         x = self.patch_extractor(x)
         
         if self.patch_extractor_model == "deit_small_patch16_224" or self.patch_extractor_model == "deit_base_patch16_224":
-            # DEiT models return a tensor with shape (batch_size, embedding_size, N)
-            # We need to reshape it to (batch_size, N, 14,14) in order to then use grad-cam
+            """ DEiT models return a tensor with shape (batch_size, embedding_size, N)
+            We need to reshape it to (batch_size, embedding_size, 14, 14) in order to then use grad-cam """
+            batch_size = x.size(0)
+            x = x[:,1:,:] # Remove the CLS token of the patch sequence
             x = x.permute(0, 2, 1)
-            x = x.reshape(1, 2, 14, 14)
+            x = x.reshape(batch_size, self.embedding_size, 14, 14)
         
         # Register Hook to have access to the gradients
         if x.requires_grad == True:
@@ -382,4 +384,60 @@ class InstanceMIL(nn.Module):
         x = torch.log(x)
     
         return x #(Batch_size, num_classes)
+
+def Mask_Setup(mask):
+    """ This function transforms the a binary mask shape (Batch_size, 1, 224, 224) into a mask of shape (Batch_size, N).
+        If the Segmentation only contains zeros, the mask is transformed into a mask of ones.
+    
+    Args:
+        mask (torxh.Tensor):Binary mask of shape (Batch_size, 1, 224, 224).
+    Returns:
+        torch.tensor: Binary mask of shape (Batch_size, N).
+    """
+        
+    mask = F.max_pool2d(mask, kernel_size=16, stride=16)  # Transform Mask into shape (Batch_size, 1, 14, 14)
+    mask = mask.reshape(mask.size(0), mask.size(2)*mask.size(3)) # Reshape mask to shape (Batch_size, N)
+    
+    for i in range (len(mask)):
+        if len(torch.unique(mask[i])) == 1:
+            mask[i] = torch.ones_like(mask[i])
+        
+    return mask
+
+def Pretrained_Feature_Extractures(feature_extractor, args) -> str: 
+    """Selects the right checkpoint for the selected feature extractor model.
+    
+    Args:
+        feature_extractor (str): Name of the feature extractor model.
+        args (**): Arguments from the parser.
+    Returns:
+        str: Path to the checkpoint of the feature extractor model.
+    """
+    
+    checkpoints = ['https://download.pytorch.org/models/resnet18-5c106cde.pth', 
+                   'https://download.pytorch.org/models/resnet50-19c8e357.pth', 
+                   'https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth',
+                   'https://dl.fbaipublicfiles.com/deit/deit_base_patch16_224-b5f2ef4d.pth',
+                   'https://download.pytorch.org/models/vgg16-397923af.pth',
+                   'https://download.pytorch.org/models/densenet169-b2777c0a.pth',
+                   'https://github.com/rwightman/pytorch-image-models/releases/download/v0.1-weights/efficientnet_b3_ra2-cf984f9c.pth']
+    
+    if feature_extractor == "resnet18.tv_in1k":
+        return checkpoints[0]
+    elif feature_extractor == "resnet50.tv_in1k":
+        return checkpoints[1]
+    elif feature_extractor == "deit_small_patch16_224":
+        return checkpoints[2]
+    elif feature_extractor == "deit_base_patch16_224":
+        return checkpoints[3]
+    elif feature_extractor == "vgg16.tv_in1k":
+        return checkpoints[4]
+    elif feature_extractor == "densenet169.tv_in1k":
+        return checkpoints[5]
+    elif feature_extractor == "efficientnet_b3":
+        return checkpoints[6]
+    else:
+        raise ValueError(f"Invalid feature_extractor: {feature_extractor}. Must be 'resnet18.tv_in1k',\
+            'resnet50.tv_in1k', 'deit_small_patch16_224', 'deit_base_patch16_224', 'vgg16.tv_in1k' or 'efficientnet'.")
+        
     

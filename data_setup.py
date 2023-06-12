@@ -16,21 +16,21 @@ class ISIC2019_Dataset(Dataset):
     def __init__(self, 
                  image_dir, 
                  mask_dir=None, 
-                 is_train=True, 
-                 img_transform=None, 
+                 img_transform=None,
+                 mask_is_val = False, 
                  mask_transform=None):
         
         self.image_dir = image_dir
-        self.is_train = is_train
-        if self.is_train:
-            self.mask_dir = mask_dir
-        else:
-            self.mask_dir = None 
+        self.mask_dir = mask_dir
         self.mask_transform = mask_transform
         self.img_transform = img_transform
         self.idx = []
         self.targets = []
         self.classes, self.class_to_idx = find_classes(self.image_dir)
+        
+        if not mask_is_val:
+            self.mask_dir = None
+            
         
         for label in os.listdir(self.image_dir):
 
@@ -59,7 +59,7 @@ class ISIC2019_Dataset(Dataset):
         img = Image.open(img_path)
         img = self.img_transform(img)
         
-        if mask_path is not None:
+        if mask_path is not None and os.path.exists(mask_path):
             mask = Image.open(mask_path).convert('L')
             mask = self.mask_transform(mask)
             mask = ~mask.bool()
@@ -122,8 +122,11 @@ def build_dataset(is_train, args):
             transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD)
         ])
     
-    if args.mask:
-        mask_root = os.path.join(args.mask_path, args.mask_is_train_path if is_train else '')
+    mask_is_val = False
+    if args.mask:   
+        if args.mask_val: 
+            mask_is_val = True    
+        mask_root = os.path.join(args.mask_path, args.mask_is_train_path if is_train else args.mask_val)
         mask_transform = transforms.Compose([
             #transforms.Resize(int((256 / 224) * args.input_size), interpolation=3),
             #transforms.Resize(size=(args.input_size, args.input_size)), # Equivalent to above if input_size=224
@@ -137,8 +140,8 @@ def build_dataset(is_train, args):
         
     dataset = ISIC2019_Dataset(image_dir = img_root,
                                 mask_dir = mask_root, 
-                                is_train = is_train,
                                 img_transform=img_transform,
+                                mask_is_val=mask_is_val,
                                 mask_transform=mask_transform)
     nb_classes = len(dataset.classes)
             

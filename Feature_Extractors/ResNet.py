@@ -484,7 +484,9 @@ class ResNet(nn.Module):
 
         # Head (Pooling and Classifier)
         self.num_features = 512 * block.expansion
-        #self.global_pool, self.fc = create_classifier(self.num_features, self.num_classes, pool_type=global_pool)
+        
+        if not feature_extractor:
+            self.global_pool, self.fc = create_classifier(self.num_features, self.num_classes, pool_type=global_pool)
 
         self.init_weights(zero_init_last=zero_init_last)
         
@@ -535,9 +537,8 @@ class ResNet(nn.Module):
             x = self.layer1(x)
             x = self.layer2(x)
             x = self.layer3(x)
-            if self.desired_output_size == 14: 
-                return x
-            #x = self.layer4(x)
+            if not self.feature_extractor:
+                x = self.layer4(x)
         return x
 
     def forward_head(self, x, pre_logits: bool = False):
@@ -548,10 +549,8 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         x = self.forward_features(x)
-        
-        """ if not self.feature_extractor:
-            x = self.forward_head(x) """
-            
+        if not self.feature_extractor:
+            x = self.forward_head(x)
         return x
 
 
@@ -607,7 +606,7 @@ default_cfgs = generate_default_cfgs({
     # ResNet
     'resnet18.tv_in1k': _cfg(
         hf_hub_id='timm/',
-        url='https://download.pytorch.org/models/resnet18-5c106cde.pth',
+        url='https://download.pytorch.org/models/efficientnet_b3_rwightman-cf984f9c.pth',
         license='bsd-3-clause', origin_url='https://github.com/pytorch/vision'),
     'resnet34.tv_in1k': _cfg(
         hf_hub_id='timm/',

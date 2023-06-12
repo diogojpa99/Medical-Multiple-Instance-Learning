@@ -496,10 +496,11 @@ class VisionTransformer(nn.Module):
             for i in range(depth)])
         self.norm = norm_layer(embed_dim) if not use_fc_norm else nn.Identity()
 
-        # Classifier Head
-        """ self.fc_norm = norm_layer(embed_dim) if use_fc_norm else nn.Identity()
-        self.head_drop = nn.Dropout(drop_rate)
-        self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity() """
+        if not feature_extractor:
+            # Classifier Head
+            self.fc_norm = norm_layer(embed_dim) if use_fc_norm else nn.Identity()
+            self.head_drop = nn.Dropout(drop_rate)
+            self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
         self.feature_extractor = feature_extractor
 
@@ -633,10 +634,8 @@ class VisionTransformer(nn.Module):
 
     def forward(self, x):
         x = self.forward_features(x)
-        
-        """ if not self.feature_extractor:
-            x = self.forward_head(x) """
-            
+        if not self.feature_extractor:
+            x = self.forward_head(x)
         return x
 
 

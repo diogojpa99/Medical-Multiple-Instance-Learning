@@ -1,6 +1,9 @@
 import data_setup, utils, mil, engine, visualization
 import Feature_Extractors.ResNet as resnet
 import Feature_Extractors.DEiT as deit, Feature_Extractors.ViT as vit
+import Feature_Extractors.VGG as vgg
+import Feature_Extractors.DenseNet as densenet
+import Feature_Extractors.EfficientNet as efficientnet
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -9,7 +12,6 @@ from timm.utils import get_state_dict, ModelEma, NativeScaler
 from timm.scheduler import create_scheduler
 from timm.models import create_model
 import torch.optim as optim
-
 
 import argparse
 from pathlib import Path
@@ -25,7 +27,7 @@ def get_args_parser():
     parser = argparse.ArgumentParser('MIL - Version 2', add_help=False)
     
     ## Add arguments here
-    parser.add_argument('--output_dir', default='model_x', help='path where to save, empty for no saving')
+    parser.add_argument('--output_dir', default='MIL-Output', help='path where to save, empty for no saving')
     parser.add_argument('--data_path', default='', help='path to input file')
     parser.add_argument('--seed', default=42, type=int, help='random seed')
     parser.add_argument('--gpu', default='cuda:1', help='GPU id to use.')
@@ -52,7 +54,8 @@ def get_args_parser():
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='start epoch')
     parser.add_argument('--classifier_warmup_epochs', type=int, default=5, metavar='N')
     
-    parser.add_argument('--dropout', type=float, default=0.0, help='Dropout rate (default: 0.0)')
+    parser.add_argument('--drop', type=float, default=0.0, metavar='PCT', help='drop rate (default: 0.)')
+    parser.add_argument('--drop_path', type=float, default=0.1, metavar='PCT', help='Drop path rate (default: 0.1)')
         
     # MIL parameters
     parser.add_argument('--pooling_type', default='max', choices=['max', 'avg', 'topk', 'mask_avg', 'mask_max'], type=str, help="")
@@ -60,22 +63,24 @@ def get_args_parser():
     parser.add_argument('--topk', default=25, type=int, help='topk for topk pooling')
     
     # Feature Extractor parameters
+    parser.add_argument('--feature_extractor', default='resnet18.tv_in1k', type=str, metavar='MODEL',
+                        choices=['resnet18.tv_in1k', 'resnet50.tv_in1k', 'deit_small_patch16_224', 'deit_base_patch16_224','vgg16.tv_in1k',
+                                 'densenet169.tv_in1k', 'efficientnet_b3'], 
+                        help='Feature Extractor model architecture (default: "resnet18")')
+    
     parser.add_argument('--pretrained_feature_extractor_path', default='https://download.pytorch.org/models/resnet18-5c106cde.pth', type=str, 
                         choices=['https://download.pytorch.org/models/resnet18-5c106cde.pth', 
                                  'https://download.pytorch.org/models/resnet50-19c8e357.pth', 
                                  'https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth',
-                                 'https://dl.fbaipublicfiles.com/deit/deit_base_patch16_224-b5f2ef4d.pth'], 
+                                 'https://dl.fbaipublicfiles.com/deit/deit_base_patch16_224-b5f2ef4d.pth',
+                                 'https://download.pytorch.org/models/vgg16-397923af.pth',
+                                 'https://download.pytorch.org/models/densenet169-b2777c0a.pth',
+                                 'https://github.com/rwightman/pytorch-image-models/releases/download/v0.1-weights/efficientnet_b3_ra2-cf984f9c.pth'], 
                         metavar='PATH', help="Download the pretrained feature extractor from the given path.")
     
     parser.add_argument('--feature_extractor_pretrained_dataset', default='ImageNet1k', type=str, metavar='DATASET')
-    parser.add_argument('--feature_extractor', default='resnet18.tv_in1k', type=str, metavar='MODEL',
-                        choices=['resnet18.tv_in1k', 
-                                 'resnet50.tv_in1k', 
-                                 'deit_small_patch16_224', 
-                                 'deit_base_patch16_224',], 
-                        help='Feature Extractor model architecture (default: "resnet18")')
+    parser.add_argument('--efficientnet_feature_flag', action='store_true', default=False, help='efficientnet feature extractor flag')
 
-        
     # Evaluation parameters
     parser.add_argument('--evaluate', action='store_true', default=False, help='evaluate model on validation set')
     parser.add_argument('--evaluate_model_name', default='MIL_model_0.pth', type=str, help="")
@@ -191,7 +196,8 @@ def get_args_parser():
     # Segmentation Mask parameters
     parser.add_argument('--mask', action='store_true', default=False, help='Use segmentation mask')
     parser.add_argument('--mask_path', default='', type=str, help='path to segmentation mask')
-    parser.add_argument('--mask_is_train_path', default='train', type=str, help='path to multiclass segmentation mask')
+    parser.add_argument('--mask_is_train_path', default='train', type=str, help='path to train directory of multiclass binary segmentation masks')
+    parser.add_argument('--mask_val', default='', type=str, help='path to val directory of binary segmentation masks')
     
     return parser
 
@@ -212,7 +218,7 @@ def main(args):
             "warmup_epochs": args.warmup_epochs, "Warmup lr": args.warmup_lr,
             "cooldown_epochs": args.cooldown_epochs, "patience_epochs": args.patience_epochs,
             "lr_scheduler": args.sched, "lr": args.lr, "min_lr": args.min_lr,
-            "dropout": args.dropout, "weight_decay": args.weight_decay,
+            "drop": args.drop, "weight_decay": args.weight_decay,
             "optimizer": args.opt, "momentum": args.momentum,
             "seed": args.seed, "class_weights": args.class_weights,
             "early_stopping_patience": args.patience, "early_stopping_delta": args.delta,
@@ -227,6 +233,9 @@ def main(args):
     for arg in vars(args):
         print(f"{arg}: {getattr(args, arg)}")
     print("------------------------------------------\n")
+    
+    if (args.pooling_type == 'mask_max' or args.pooling_type == 'mask_avg') and not args.mask:
+        raise ValueError('Masked pooling type requires mask flag to be True.') 
     
     # Set device
     device = args.gpu if torch.cuda.is_available() else "cpu"
@@ -264,79 +273,90 @@ def main(args):
     ############################ Define the Feature Extractor ############################
     
     num_chs = 256
-    
+    model_args = {}
     if args.feature_extractor == 'resnet18.tv_in1k':
-
         """ feature_extractor = ResNet.ResNet(block=ResNet.BasicBlock, 
                                           layers=[2, 2, 2], 
-                                          desired_output_size=(args.input_size // args.patch_size)) """
-                                                  
+                                          desired_output_size=(args.input_size // args.patch_size)) """            
         model_args = dict(block=resnet.BasicBlock, 
                           layers=[2, 2, 2], 
                           desired_output_size=(args.input_size // args.patch_size),
-                          drop_rate=args.dropout,
+                          drop_rate=args.drop,
                           drop_path_rate=0.,
                           drop_block_rate=0.,
                           feature_extractor=True)
         
     elif args.feature_extractor == 'resnet50.tv_in1k':
-        
         model_args = dict(block=resnet.Bottleneck, 
                           layers=[3, 4, 6], 
                           desired_output_size=(args.input_size // args.patch_size),
-                          drop_rate=args.dropout,
+                          drop_rate=args.drop,
                           drop_path_rate=0.,
                           drop_block_rate=0.,
                           feature_extractor=True)
-                
-    elif args.feature_extractor == 'deit_small_patch16_224':
         
+    elif args.feature_extractor == 'deit_small_patch16_224':
         num_chs = 384
         model_args = dict(img_size=args.input_size,
                           patch_size=args.patch_size,
                           embed_dim=num_chs, 
                           depth=12, 
                           num_heads=6,
-                          drop_rate=args.dropout,
-                          drop_path_rate=0.,
-                          attn_drop_rate=0.2,
+                          drop_rate=args.drop,
+                          drop_path_rate=args.drop_path,
+                          attn_drop_rate=0.,
                           feature_extractor=True)
         
-        
     elif args.feature_extractor == 'deit_base_patch16_224':
-
         num_chs = 768
         model_args = dict(img_size=args.input_size,
                           patch_size=args.patch_size,
                           embed_dim=num_chs, 
                           depth=12, 
                           num_heads=12,
-                          drop_rate=args.dropout,
-                          drop_path_rate=0.,
+                          drop_rate=args.drop,
+                          drop_path_rate=args.drop_path,
                           attn_drop_rate=0.,
                           feature_extractor=True)
-    
-    elif args.feature_extractor == 'vgg16': 
         
-        raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
-    
+    elif args.feature_extractor == 'vgg16.tv_in1k': 
+        model_args = dict(cfg=[64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512],
+                          drop_rate=args.drop,
+                          feature_extractor=True)
+        
+    elif args.feature_extractor == 'densenet169.tv_in1k':
+        model_args = dict(block_config=(6, 12, 32),
+                          drop_rate=args.drop,
+                          feature_extractor=True)
+        
+    elif args.feature_extractor == 'efficientnet_b3':
+        model_args = dict(drop_rate=0.3,
+                          drop_path_rate=0.2,
+                          feature_extractor=args.efficientnet_feature_flag,
+                          desired_output_size=(args.input_size // args.patch_size))
     else:
         raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
         
-
     feature_extractor = create_model(model_name=args.feature_extractor,
-                                     pretrained=False, 
+                                     pretrained=False,  
                                      **dict(model_args))
     
     if args.feature_extractor=='resnet18.tv_in1k' or args.feature_extractor=='resnet50.tv_in1k':
-
         if feature_extractor.feature_info[-1]['module'] == 'layer3':
             num_chs = feature_extractor.feature_info[-1]['num_chs']
             
-    elif args.feature_extractor=='vgg16':
-        raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
+    elif args.feature_extractor=='vgg16.tv_in1k':
+        num_chs = feature_extractor.feature_info[-1]['num_chs']
+        
+    elif args.feature_extractor=='densenet169.tv_in1k':
+        num_chs = feature_extractor.feature_info[-1]['num_chs']
+
+    elif args.feature_extractor=='efficientnet_b3':
+        #num_chs = feature_extractor.feature_info[-1]['num_chs']
+        num_chs = list(feature_extractor.named_parameters())[-1][1].shape[0]
     
     feature_extractor.to(device)
+    args.pretrained_feature_extractor_path = mil.Pretrained_Feature_Extractures(args.feature_extractor, args)
             
     ############################ Define the MIL Model ############################
         
@@ -345,10 +365,11 @@ def main(args):
         model = mil.InstanceMIL(num_classes=args.nb_classes, 
                                 N=(args.input_size // args.patch_size)**2,
                                 embedding_size=num_chs,
-                                dropout=args.dropout,
+                                dropout=args.drop,
                                 pooling_type=args.pooling_type,
                                 device=device,
                                 args=args,
+                                patch_extractor_model=args.feature_extractor,
                                 patch_extractor=feature_extractor)
         
     elif args.mil_type == 'embedding':
@@ -356,16 +377,17 @@ def main(args):
         model = mil.EmbeddingMIL(num_classes=args.nb_classes, 
                                 N=(args.input_size // args.patch_size)**2,
                                 embedding_size=num_chs,
-                                dropout=args.dropout,
+                                dropout=args.drop,
                                 pooling_type=args.pooling_type,
                                 device=device,
                                 args=args,
+                                patch_extractor_model=args.feature_extractor,
                                 patch_extractor=feature_extractor)
         
     elif args.mil_type == 'attention':
         raise NotImplementedError('This MIL implementation does not support this MIL type..yet!')
         
-    ## Implement -> If finetune_ckpt then load the weights of the model
+    # TODO: Implement -> If finetune_ckpt then load the weights of the model
     # Only then can I do model.to(device) and model_ema.to(device)
     
     model.to(device)
@@ -387,7 +409,7 @@ def main(args):
         print(f"Number of parameters: {n_parameters}\n")
         
         # (1) Define the class weights
-        class_weights = utils.Class_Weighting(train_set, val_set, device, args)
+        class_weights = engine.Class_Weighting(train_set, val_set, device, args)
         
         # (2) Define the optimizer
         optimizer = create_optimizer(args=args, model=model)
@@ -447,7 +469,7 @@ def main(args):
             'number of classes: {}'.format(args.nb_classes), 'number of epochs: {}'.format(args.epochs), 'batch size: {}'.format(args.batch_size), 
             'Init learning rate: {}'.format(args.lr), 'scheduler: {}'.format(args.sched), 'Warmup lr: {}'.format(args.warmup_lr),
             'Decay rate: {}'.format(args.decay_rate), 'Lr Decay Epochs: {}'.format(args.decay_epochs),
-            'optimizer: {}'.format(args.opt), 'dropout: {}'.format(args.dropout),
+            'optimizer: {}'.format(args.opt), 'drop: {}'.format(args.drop),
             'loss function: {}'.format(criterion), 'class weights: {}'.format(class_weights), 'weight decay: {}'.format(args.weight_decay),
             'momentum: {}'.format(args.momentum), 'Early-Stopping Patience: {}'.format(args.patience), 'Early-Stopping Delta: {}'.format(args.delta),
             'MIL Type: {}'.format(args.mil_type), 'Pooling Type: {}'.format(args.pooling_type),
@@ -491,7 +513,7 @@ def main(args):
                                             dataloader=data_loader_train,
                                             criterion=criterion,
                                             optimizer=optimizer,
-                                            device=device,
+                                            device=device,  
                                             epoch=epoch+1,
                                             wandb=wandb,
                                             loss_scaler=loss_scaler,

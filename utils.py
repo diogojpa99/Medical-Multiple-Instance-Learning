@@ -5,7 +5,6 @@ import numpy as np
 import random
 
 import os
-from collections import Counter
 from pathlib import Path
 
 import torch
@@ -45,38 +44,6 @@ def Plot_TrainSet(trainset, args):
         plt.title('Mixed training examples')
     
     plt.savefig('train_images.png', bbox_inches='tight', pad_inches=0)
-    
-def Class_Weighting(train_set, val_set, device, args):
-    
-    # Check the distribution of the dataset
-    train_dist = dict(Counter(train_set.targets))
-    val_dist = dict(Counter(val_set.targets))
-    
-    train_dist['MEL'] = train_dist.pop(0)
-    train_dist['NV'] = train_dist.pop(1)
-    val_dist['MEL'] = val_dist.pop(0)
-    val_dist['NV'] = val_dist.pop(1)
-    
-    n_train_samples = len(train_set)
-    
-    print(f"Classes: {train_set.classes}\n")
-    print(f"Classes map: {train_set.class_to_idx}\n")
-    print(f"Train distribution: {train_dist}\n")
-    print(f"Val distribution: {val_dist}\n")
-    
-    if args.class_weights:
-        if args.class_weights_type == 'Median':
-            class_weight = torch.Tensor([n_train_samples/train_dist['MEL'], 
-                                         n_train_samples/ train_dist['NV']]).to(device)
-        elif args.class_weights_type == 'Manual':                   
-            class_weight = torch.Tensor([n_train_samples/(2*train_dist['MEL']), 
-                                         n_train_samples/(2*train_dist['NV'])]).to(device)
-    else: 
-        class_weight = None
-    
-    print(f"Class weights: {class_weight}\n")
-    
-    return class_weight
 
 def plot_confusion_matrix(confusion_matrix, class_names, output_dir, args):
     
@@ -185,11 +152,12 @@ def Load_Pretrained_FeatureExtractor(path, model, args):
 
     state_dict = model.state_dict()
         
-    # Remove last layer
-    """ for k in ['fc.weight', 'fc.bias']:
-        if k in checkpoint and checkpoint[k].shape != state_dict[k].shape:
-            print(f"Removing key {k} from pretrained checkpoint")
-            del checkpoint[k] """
+    if args.feature_extractor == 'efficientnet_b3' and args.efficientnet_feature_flag == False:
+        # Remove last layer
+        for k in ['conv_head.weight', 'conv_head.bias']:
+            if k in checkpoint and checkpoint[k].shape != state_dict[k].shape:
+                print(f"Removing key {k} from pretrained checkpoint")
+                del checkpoint[k]
 
     # Load the pre-trained weights into the model
     model.load_state_dict(checkpoint, strict=False)
@@ -287,22 +255,3 @@ def Load_Pretrained_MIL_Model(path, model, args):
         del checkpoint['model'][k]
             
     model.load_state_dict(checkpoint['model'])
-    
-
-def Mask_Setup(mask):
-    """ 
-    This function transforms the a binary mask shape (Batch_size, 1, 224, 224) into a mask of shape (Batch_size, N).
-    If the Segmentation only contains zeros, the mask is transformed into a mask of ones.
-    
-    Input: mask of shape (Batch_size, 1, 224, 224)
-    Returns: mask of shape (Batch_size, N)
-    """
-        
-    mask = F.max_pool2d(mask, kernel_size=16, stride=16)  # Transform Mask into shape (Batch_size, 1, 14, 14)
-    mask = mask.reshape(mask.size(0), mask.size(2)*mask.size(3)) # Reshape mask to shape (Batch_size, N)
-    
-    for i in range (len(mask)):
-        if len(torch.unique(mask[i])) == 1:
-            mask[i] = torch.ones_like(mask[i])
-        
-    return mask

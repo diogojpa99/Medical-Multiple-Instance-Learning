@@ -5,84 +5,11 @@ import torch
 from timm.utils import ModelEma
 
 from typing import Optional
+from collections import Counter
 
 import numpy as np
 from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score, \
     balanced_accuracy_score
-
-class EarlyStopping:
-    """Early stops the training if validation loss doesn't improve after a given patience."""
-    def __init__(self, patience=7, verbose=False, delta=0, path='checkpoint.pt', trace_func=print):
-        """
-        Args:
-            patience (int): How long to wait after last time validation loss improved.
-                            Default: 7
-            verbose (bool): If True, prints a message for each validation loss improvement. 
-                            Default: False
-            delta (float): Minimum change in the monitored quantity to qualify as an improvement.
-                            Default: 0
-            path (str): Path for the checkpoint to be saved to.
-                            Default: 'checkpoint.pt'
-            trace_func (function): trace print function.
-                            Default: print            
-        """
-        self.patience = patience
-        self.verbose = verbose
-        self.counter = 0
-        self.best_score = None
-        self.early_stop = False
-        self.val_loss_min = np.Inf
-        self.delta = delta
-        self.path = path
-        self.trace_func = trace_func
-        
-    def __call__(self, val_loss, model):
-
-        score = -val_loss
-
-        if self.best_score is None:
-            self.best_score = score
-            self.save_checkpoint(val_loss, model)
-            
-        elif score < self.best_score + self.delta:
-            # If we don't have an improvement, increase the counter 
-            self.counter += 1
-            #self.trace_func(f'\tEarlyStopping counter: {self.counter} out of {self.patience}')
-            if self.counter >= self.patience:
-                self.early_stop = True
-        else:
-            # If we have an imporvement, save the model
-            self.best_score = score
-            self.save_checkpoint(val_loss, model)
-            self.counter = 0
-    
-    def save_checkpoint(self, val_loss, model):
-        '''Saves model when validation loss decrease.'''
-        if self.verbose:
-            #self.trace_func(f'\tValidation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model as checkpoint.pth')
-            self.trace_func(f'\tValidation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).')
-            
-        #torch.save(model.state_dict(), self.path)
-        self.val_loss_min = val_loss
-
-def train_patch_extractor(model: torch.nn.Module,
-                          current_epoch: int,
-                          warmup_epochs: int,
-                          flag: bool,
-                          args):
-    
-    # During warmup, patch extractor is not trained
-    if current_epoch < warmup_epochs:
-        for param in model.patch_extractor.parameters():
-            param.requires_grad = False
-        flag = True
-        
-    elif current_epoch >= warmup_epochs:
-        for param in model.patch_extractor.parameters():
-            param.requires_grad = True
-        flag = False
-        
-    return flag
       
 def train_step(model: torch.nn.Module, 
                dataloader: torch.utils.data.DataLoader, 
@@ -192,8 +119,13 @@ def evaluation(model: torch.nn.Module,
         input, target, mask = input.to(device, non_blocking=True), target.to(device, non_blocking=True), mask.to(device, non_blocking=True)
 
         # Compute output
-        with torch.no_grad(), torch.inference_mode():
-            bag_prob = model(input, None)
+        with torch.no_grad():
+            
+            if not args.mask_val:
+                bag_prob = model(input, None)
+            else:
+                bag_prob = model(input, mask)
+                
             loss = criterion(bag_prob, target)
             test_loss += loss.item()
     
@@ -221,3 +153,122 @@ def evaluation(model: torch.nn.Module,
     results['acc1'], results['loss'] = test_acc, test_loss
 
     return results
+
+class EarlyStopping:
+    """Early stops the training if validation loss doesn't improve after a given patience."""
+    def __init__(self, patience=7, verbose=False, delta=0, path='checkpoint.pt', trace_func=print):
+        """
+        Args:
+            patience (int): How long to wait after last time validation loss improved.
+                            Default: 7
+            verbose (bool): If True, prints a message for each validation loss improvement. 
+                            Default: False
+            delta (float): Minimum change in the monitored quantity to qualify as an improvement.
+                            Default: 0
+            path (str): Path for the checkpoint to be saved to.
+                            Default: 'checkpoint.pt'
+            trace_func (function): trace print function.
+                            Default: print            
+        """
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.val_loss_min = np.Inf
+        self.delta = delta
+        self.path = path
+        self.trace_func = trace_func
+        
+    def __call__(self, val_loss, model):
+
+        score = -val_loss
+
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(val_loss, model)
+            
+        elif score < self.best_score + self.delta:
+            # If we don't have an improvement, increase the counter 
+            self.counter += 1
+            #self.trace_func(f'\tEarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            # If we have an imporvement, save the model
+            self.best_score = score
+            self.save_checkpoint(val_loss, model)
+            self.counter = 0
+    
+    def save_checkpoint(self, val_loss, model):
+        '''Saves model when validation loss decrease.'''
+        if self.verbose:
+            #self.trace_func(f'\tValidation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model as checkpoint.pth')
+            self.trace_func(f'\tValidation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).')
+            
+        #torch.save(model.state_dict(), self.path)
+        self.val_loss_min = val_loss
+
+def train_patch_extractor(model: torch.nn.Module, 
+                          current_epoch: int, 
+                          warmup_epochs: int, 
+                          flag: bool, 
+                          args
+):    
+    """ Function to train the patch extractor for the first warmup_epochs epochs.
+    Returns:
+        bool: flag that defines if the patch extractor is trainable or not.
+    """
+    if current_epoch < warmup_epochs:
+        for param in model.patch_extractor.parameters():
+            param.requires_grad = False
+        flag = True
+        
+    elif current_epoch >= warmup_epochs:
+        for param in model.patch_extractor.parameters():
+            param.requires_grad = True
+        flag = False
+        
+    return flag
+
+def Class_Weighting(train_set, val_set, device, args):
+    """ Class weighting for imbalanced datasets.
+
+    Args:
+        train_set (torch.utils.data.Dataset): Training set.
+        val_set (torch.utils.data.Dataset): Validation set.
+        device (str): Device to use.
+        args (*args): Arguments.
+
+    Returns:
+        torch.Tensor: Class weights. (shape: (2,))
+    """
+    
+    train_dist = dict(Counter(train_set.targets))
+    val_dist = dict(Counter(val_set.targets))
+    
+    train_dist['MEL'] = train_dist.pop(0)
+    train_dist['NV'] = train_dist.pop(1)
+    val_dist['MEL'] = val_dist.pop(0)
+    val_dist['NV'] = val_dist.pop(1)
+    
+    n_train_samples = len(train_set)
+    
+    print(f"Classes: {train_set.classes}\n")
+    print(f"Classes map: {train_set.class_to_idx}\n")
+    print(f"Train distribution: {train_dist}\n")
+    print(f"Val distribution: {val_dist}\n")
+    
+    if args.class_weights:
+        if args.class_weights_type == 'Median':
+            class_weight = torch.Tensor([n_train_samples/train_dist['MEL'], 
+                                         n_train_samples/ train_dist['NV']]).to(device)
+        elif args.class_weights_type == 'Manual':                   
+            class_weight = torch.Tensor([n_train_samples/(2*train_dist['MEL']), 
+                                         n_train_samples/(2*train_dist['NV'])]).to(device)
+    else: 
+        class_weight = None
+    
+    print(f"Class weights: {class_weight}\n")
+    
+    return class_weight
