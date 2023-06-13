@@ -2,25 +2,27 @@ now=$(date +"%Y%m%d_%H%M%S")
 logdir=""
 datapath="../Datasets/derm7pt_like_ISIC2019"
 
-inst="embedding"
-pool="mask_avg"
+mil_t="embedding"
+pool="avg"
+data="Derm7pt"
 
-ckpt="Pretrained_Models/MIL_$inst-Pool_$pool/best_checkpoint.pth"
+ckpt="Pretrained_Models/MIL_$mil_t-Pool_$pool/best_checkpoint.pth"
 
-logdir="MIL-$inst-$pool-Test_derm7pt_test-Time_$now"
+logdir="MIL-$mil_t-$pool-Test_$data-Time_$now"
 echo "----------------- Output dir: $logdir --------------------"
 
 python main.py \
 	--evaluate \
+	--dataset $data \
 	--project_name "Thesis" \
 	--run_name "$logdir" \
 	--hardware "MyPC" \
-	--mil_type $inst \
+	--mil_type $mil_t \
 	--pooling_type $pool \
 	--num_workers 8 \
 	--data_path $datapath \
 	--resume $ckpt \
 	--output_dir $logdir  \
 
-echo "output dir for the last exp: $logdir/MIL-$inst-$pool"\
+echo "output dir for the last exp: $logdir/MIL-$mil_t-$pool"\
 

@@ -11,14 +11,16 @@ from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.data import create_transform
 
 
-class ISIC2019_Dataset(Dataset):
+class SkinCancerDataset(Dataset):
     
     def __init__(self, 
                  image_dir, 
                  mask_dir=None, 
                  img_transform=None,
-                 mask_is_val = False, 
-                 mask_transform=None):
+                 mask_is_val=False, 
+                 is_train=True,
+                 mask_transform=None,
+                 dataset='ISIC2019-Clean'):
         
         self.image_dir = image_dir
         self.mask_dir = mask_dir
@@ -28,10 +30,9 @@ class ISIC2019_Dataset(Dataset):
         self.targets = []
         self.classes, self.class_to_idx = find_classes(self.image_dir)
         
-        if not mask_is_val:
+        if not mask_is_val and not is_train:
             self.mask_dir = None
             
-        
         for label in os.listdir(self.image_dir):
 
             label_dir = os.path.join(self.image_dir, label)
@@ -39,11 +40,18 @@ class ISIC2019_Dataset(Dataset):
             
             for img_name in os.listdir(label_dir):
                 
-                img_idx = img_name[:12] # This is specific for ISIC2019
+                if dataset == 'ISIC2019-Clean':
+                    img_idx = img_name[:12] 
+                elif dataset == 'PH2' or dataset == 'Derm7pt':
+                    img_idx = img_name
+                    
                 img_path = os.path.join(label_dir, img_name)
                 
                 if self.mask_dir is not None:
-                    mask_path = os.path.join(self.mask_dir, label, f"{img_idx}.png")
+                    if dataset == 'ISIC2019-Clean':
+                        mask_path = os.path.join(self.mask_dir, label, f"{img_idx}.png")
+                    elif dataset == 'PH2' or dataset == 'Derm7pt':
+                        mask_path = os.path.join(self.mask_dir, label, img_idx)
                 else:
                     mask_path = None
                     
@@ -128,9 +136,6 @@ def build_dataset(is_train, args):
             mask_is_val = True    
         mask_root = os.path.join(args.mask_path, args.mask_is_train_path if is_train else args.mask_val)
         mask_transform = transforms.Compose([
-            #transforms.Resize(int((256 / 224) * args.input_size), interpolation=3),
-            #transforms.Resize(size=(args.input_size, args.input_size)), # Equivalent to above if input_size=224
-            #transforms.CenterCrop(args.input_size),
             transforms.ToTensor(),
             transforms.Lambda(replace_values)
         ])
@@ -138,11 +143,13 @@ def build_dataset(is_train, args):
         mask_root = None
         mask_transform = None
         
-    dataset = ISIC2019_Dataset(image_dir = img_root,
+    dataset = SkinCancerDataset(image_dir = img_root,
                                 mask_dir = mask_root, 
                                 img_transform=img_transform,
                                 mask_is_val=mask_is_val,
-                                mask_transform=mask_transform)
+                                is_train=is_train,
+                                mask_transform=mask_transform,
+                                dataset=args.dataset)
     nb_classes = len(dataset.classes)
             
     return dataset, nb_classes

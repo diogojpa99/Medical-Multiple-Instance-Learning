@@ -31,13 +31,14 @@ def get_args_parser():
     parser.add_argument('--data_path', default='', help='path to input file')
     parser.add_argument('--seed', default=42, type=int, help='random seed')
     parser.add_argument('--gpu', default='cuda:1', help='GPU id to use.')
-    parser.add_argument('--dataset_name', default='ISIC2019-Clean', type=str, metavar='DATASET')
+    parser.add_argument('--dataset', default='ISIC2019-Clean', type=str, choices=['ISIC2019-Clean', 'PH2', 'Derm7pt'], metavar='DATASET')
     
     # Wanb parameters
     parser.add_argument('--project_name', default='Thesis', help='name of the project')
     parser.add_argument('--hardware', default='Server', choices=['Server', 'Colab', 'MyPC'], help='hardware used')
     parser.add_argument('--run_name', default='MIL', help='name of the run')
     parser.add_argument('--wandb', action='store_false', default=True, help='whether to use wandb')
+    parser.add_argument('--debug', action='store_true', default=False, help='Debug mode')
     
     # Data parameters
     parser.add_argument('--input_size', default=224, type=int, help='image size')
@@ -204,7 +205,8 @@ def get_args_parser():
 def main(args):
 
     # Start a new wandb run to track this script
-    #wandb = print
+    if args.debug:
+        wandb = print
     if args.wandb:
         wandb.init(
             project=args.project_name,
@@ -213,7 +215,7 @@ def main(args):
             "Feature Extractor dataset": args.feature_extractor_pretrained_dataset,
             "Model": "MIL", "MIL type": args.mil_type,
             "Pooling": args.pooling_type, "Topk": args.topk,
-            "Dataset": args.dataset_name,
+            "Dataset": args.dataset,
             "epochs": args.epochs,"batch_size": args.batch_size,
             "warmup_epochs": args.warmup_epochs, "Warmup lr": args.warmup_lr,
             "cooldown_epochs": args.cooldown_epochs, "patience_epochs": args.patience_epochs,
@@ -459,13 +461,13 @@ def main(args):
             log_list = [];  total_time_str = '0'
             """ log_args = [
                 'Model architecture: {}'.format(utils.model_summary(model, args)), 'Feature Pretrained on: {}'.format(args.feature_extractor_pretrained_dataset), 
-                'Model Trained on: {}'.format(args.dataset_name), 'MIL Type: {}'.format(args.mil_type), 'Pooling Type: {}'.format(args.pooling_type)] """
+                'Model Trained on: {}'.format(args.dataset), 'MIL Type: {}'.format(args.mil_type), 'Pooling Type: {}'.format(args.pooling_type)] """
         
     elif args.training or args.finetune:
         
         """ log_args = [
             '----------------------- Logs for Training ----------------------',
-            'Feature Pretrained on: {}'.format(args.feature_extractor_pretrained_dataset), 'Model Trained on: {}'.format(args.dataset_name),
+            'Feature Pretrained on: {}'.format(args.feature_extractor_pretrained_dataset), 'Model Trained on: {}'.format(args.dataset),
             'number of classes: {}'.format(args.nb_classes), 'number of epochs: {}'.format(args.epochs), 'batch size: {}'.format(args.batch_size), 
             'Init learning rate: {}'.format(args.lr), 'scheduler: {}'.format(args.sched), 'Warmup lr: {}'.format(args.warmup_lr),
             'Decay rate: {}'.format(args.decay_rate), 'Lr Decay Epochs: {}'.format(args.decay_epochs),
@@ -593,12 +595,13 @@ def main(args):
         """ if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write('\n'.join(log_args) + '\n' + '\n'.join(str(item) for item in log_list) + '\n' + '\n'.join(log_test_stats) + '\n') """
-                
-        print('\n---------------- Train stats for the last epoch ----------------\n',
-            f"Acc: {train_stats['acc1']:.3f} | Bacc: {train_stats['bacc']:.3f} | F1-score: {np.mean(train_stats['f1_score']):.3f} | \n",
-            f"Precision[MEL]: {train_stats['precision'][0]:.3f} | Precision[NV]: {train_stats['precision'][1]:.3f} | \n",
-            f"Recall[MEL]: {train_stats['recall'][0]:.3f} | Recall[NV]: {train_stats['recall'][1]:.3f} | \n",
-            f'Confusion Matrix: {train_stats["confusion_matrix"]}\n')
+        
+        if not args.evaluate:
+            print('\n---------------- Train stats for the last epoch ----------------\n',
+                f"Acc: {train_stats['acc1']:.3f} | Bacc: {train_stats['bacc']:.3f} | F1-score: {np.mean(train_stats['f1_score']):.3f} | \n",
+                f"Precision[MEL]: {train_stats['precision'][0]:.3f} | Precision[NV]: {train_stats['precision'][1]:.3f} | \n",
+                f"Recall[MEL]: {train_stats['recall'][0]:.3f} | Recall[NV]: {train_stats['recall'][1]:.3f} | \n",
+                f'Confusion Matrix: {train_stats["confusion_matrix"]}\n')
 
         print('\n---------------- Val. stats for the best model ----------------\n',
             f"Acc: {best_results['acc1']:.3f} | Bacc: {best_results['bacc']:.3f} | F1-score: {np.mean(best_results['f1_score']):.3f} | \n",
@@ -606,10 +609,11 @@ def main(args):
             f"Recall[MEL]: {best_results['recall'][0]:.3f} | Recall[NV]: {best_results['recall'][1]:.3f} | \n",
             f'Training time {total_time_str}')
         
-        wandb.log({"Best Val. Acc": best_results['acc1'], "Best Val. Bacc": best_results['bacc'], "Best Val. F1-score": np.mean(best_results['f1_score'])})
-        wandb.log({"Best Val. Precision[MEL]": best_results['precision'][0], "Best Val. Precision[NV]": best_results['precision'][1]})
-        wandb.log({"Best Val. Recall[MEL]": best_results['recall'][0], "Best Val. Recall[NV]": best_results['recall'][1]})
-        wandb.log({"Training time": total_time_str})
+        if wandb!=print:
+            wandb.log({"Best Val. Acc": best_results['acc1'], "Best Val. Bacc": best_results['bacc'], "Best Val. F1-score": np.mean(best_results['f1_score'])})
+            wandb.log({"Best Val. Precision[MEL]": best_results['precision'][0], "Best Val. Precision[NV]": best_results['precision'][1]})
+            wandb.log({"Best Val. Recall[MEL]": best_results['recall'][0], "Best Val. Recall[NV]": best_results['recall'][1]})
+            wandb.log({"Training time": total_time_str})
         #wandb.finish()
     
     return

@@ -170,3 +170,9 @@ ISIC2019/
 
 # Pretrained models
 Pretrained_Models/
+
+# Visualizations
+visualization/Init_Experiments/
+
+# AuxCode
+Aux_Code/
