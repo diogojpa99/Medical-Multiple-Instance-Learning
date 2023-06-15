@@ -89,8 +89,9 @@ def get_args_parser():
     
     # Visualization parameters
     parser.add_argument('--visualize', action='store_true', default=False, help='Visualize model')
-    parser.add_argument('--images_path', default="", type=str, help="")
-    parser.add_argument('--visualize_relevant_patches', action='store_true', default=False, help='Visualize relevant patches')
+    parser.add_argument('--images_path', default='', type=str, help="")
+    parser.add_argument('--visualize_num_images', default=8, type=int, help="")
+    parser.add_argument('--vis_mask_path', default='', type=str, help="")
     
     # Imbalanced dataset parameters
     parser.add_argument('--class_weights', action='store_true', default=True, help='Enabling class weighting')
@@ -205,8 +206,6 @@ def get_args_parser():
 def main(args):
 
     # Start a new wandb run to track this script
-    if args.debug:
-        wandb = print
     if args.wandb:
         wandb.init(
             project=args.project_name,
@@ -228,7 +227,9 @@ def main(args):
             "PC": args.hardware,
             }
         )
-        wandb.run.name = args.run_name
+        wandb.run.name = args.run_name  
+    """ elif args.debug:
+        wandb=print """
     
     # Print arguments
     print("----------------- Args -------------------")
@@ -334,14 +335,15 @@ def main(args):
     elif args.feature_extractor == 'efficientnet_b3':
         model_args = dict(drop_rate=0.3,
                           drop_path_rate=0.2,
-                          feature_extractor=args.efficientnet_feature_flag,
+                          feature_extractor=True,
                           desired_output_size=(args.input_size // args.patch_size))
     else:
         raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
-        
+     
+   
     feature_extractor = create_model(model_name=args.feature_extractor,
-                                     pretrained=False,  
-                                     **dict(model_args))
+                                    pretrained=False,  
+                                    **dict(model_args))
     
     if args.feature_extractor=='resnet18.tv_in1k' or args.feature_extractor=='resnet50.tv_in1k':
         if feature_extractor.feature_info[-1]['module'] == 'layer3':
@@ -405,7 +407,6 @@ def main(args):
     output_dir = Path(args.output_dir)
         
     if args.data_path:
-        
         # Number of parameters
         n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"Number of parameters: {n_parameters}\n")
@@ -441,23 +442,27 @@ def main(args):
         
         if args.visualize:
             print('----------------- Visualization -------------------')
+            
             if args.mil_type == 'instance':
                 if args.pooling_type == 'max' or args.pooling_type == 'mask_max':
-                    visualization.Visualize_Most_Relevant_Patch_InstanceMax(model=model, datapath=args.images_path, outputdir=output_dir, args=args)
+                    visualization.Visualize_Instance_Activation_Binary_Max(model=model, datapath=args.images_path, maskpath=args.vis_mask_path, outputdir=output_dir, args=args)
+                    #visualization.Visualize_Activation_Binary_InstanceMax_loader(model=model, dataloader=data_loader_val, outputdir=output_dir, args=args)
                 else:
-                    visualization.Visualize_Most_Relevant_Patches(model=model, datapath=args.images_path, outputdir=output_dir, args=args)
-                    
-                visualization.Visualize_ActivationMap(model=model, datapath=args.images_path, outputdir=output_dir, args=args)
-                #visualization.Visualize_ActivationMaps(model=model, datapath=args.images_path, outputdir=output_dir, args=args)
-
+                    visualization.Visualize_Instance_Activation_Binary(model=model, datapath=args.images_path, maskpath=args.vis_mask_path, outputdir=output_dir, args=args)
+            #visualization.Visualize_ActivationMaps(model=model, datapath=args.images_path, outputdir=output_dir, args=args)
             elif args.mil_type == 'embedding':
-                visualization.Visualize_Embedding_ActivationMap(model=model, datapath=args.images_path, outputdir=output_dir, args=args)
+                visualization.Visualize_Embedding_Activation_Binary(model=model, datapath=args.images_path, maskpath=args.vis_mask_path, outputdir=output_dir, args=args)
 
             return
 
         elif args.evaluate:
             print('----------------- Evaluation -------------------')
-            best_results = engine.evaluation(model=model,dataloader=data_loader_val,criterion=torch.nn.NLLLoss(), epoch=0, device=device,args=args)
+            best_results = engine.evaluation(model=model,
+                                             dataloader=data_loader_val,
+                                             criterion=torch.nn.NLLLoss(), 
+                                             epoch=0, 
+                                             device=device,
+                                             args=args)
             log_list = [];  total_time_str = '0'
             """ log_args = [
                 'Model architecture: {}'.format(utils.model_summary(model, args)), 'Feature Pretrained on: {}'.format(args.feature_extractor_pretrained_dataset), 
@@ -483,9 +488,8 @@ def main(args):
               
         # Load the pretrained feature extractor
         if args.pretrained_feature_extractor_path:
-            utils.Load_Pretrained_FeatureExtractor(args.pretrained_feature_extractor_path, 
-                                                   feature_extractor,
-                                                   args)
+            utils.Load_Pretrained_FeatureExtractor(args.pretrained_feature_extractor_path, feature_extractor, args)
+            
         train_results = {'loss': [], 'acc': [] , 'lr': []}
         val_results = {'loss': [], 'acc': [], 'f1': [], 'cf_matrix': [], 'bacc': [], 'precision': [], 'recall': []}
         best_val_bacc = 0.0

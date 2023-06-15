@@ -117,7 +117,7 @@ def evaluation(model: torch.nn.Module,
     for input, target , input_idxs, mask in dataloader:
         
         input, target, mask = input.to(device, non_blocking=True), target.to(device, non_blocking=True), mask.to(device, non_blocking=True)
-
+            
         # Compute output
         with torch.no_grad():
             

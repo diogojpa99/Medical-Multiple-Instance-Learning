@@ -215,6 +215,7 @@ class InstanceMIL(nn.Module):
         self.device = device
         self.patch_scores = None
         self.gradients = None
+        self.softmax_probs = None
 
     def activations_hook(self, grad):
         self.gradients = grad
@@ -230,6 +231,12 @@ class InstanceMIL(nn.Module):
         
     def get_patch_probs(self):
         return self.patch_probs
+    
+    def save_softmax_bag_probs(self, x):
+        self.softmax_probs = x
+        
+    def get_softmax_bag_probs(self):
+        return self.softmax_probs
     
     def MaxPooling(self, probs):
         """ Classical MIL: The representation of a given bag is given by the maximum probability
@@ -287,7 +294,7 @@ class InstanceMIL(nn.Module):
         # Compute masked mean for each bag
         pooled_probs = torch.zeros(len(masked_probs)).to(self.device) # shape (Batch_size)
         for i in range(len(masked_probs)):
-            pooled_probs[i] = torch.sum(masked_probs[i])/ len(torch.nonzero(masked_probs[i]))   
+            pooled_probs[i] = torch.sum(masked_probs[i])/len(torch.nonzero(masked_probs[i]))   
         
         pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1)
         pooled_probs = pooled_probs.to(self.device)
@@ -379,6 +386,9 @@ class InstanceMIL(nn.Module):
                 x = self.MaxPooling(x)
         else:
             raise ValueError(f"Invalid pooling_type: {self.pooling_type}. Must be 'max', 'avg', 'topk', 'mask_avg' or 'mask_max'.")
+        
+        # Save the softmax probabilities of the bag
+        self.save_softmax_bag_probs(x)
         
         # (8) Apply log to softmax values 
         x = torch.log(x)

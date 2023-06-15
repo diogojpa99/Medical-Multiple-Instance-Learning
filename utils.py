@@ -152,12 +152,11 @@ def Load_Pretrained_FeatureExtractor(path, model, args):
 
     state_dict = model.state_dict()
         
-    if args.feature_extractor == 'efficientnet_b3' and args.efficientnet_feature_flag == False:
-        # Remove last layer
-        for k in ['conv_head.weight', 'conv_head.bias']:
-            if k in checkpoint and checkpoint[k].shape != state_dict[k].shape:
-                print(f"Removing key {k} from pretrained checkpoint")
-                del checkpoint[k]
+    """ # Remove last layer
+    for k in ['conv_head.weight', 'conv_head.bias']:
+        if k in checkpoint and checkpoint[k].shape != state_dict[k].shape:
+            print(f"Removing key {k} from pretrained checkpoint")
+            del checkpoint[k] """
 
     # Load the pre-trained weights into the model
     model.load_state_dict(checkpoint, strict=False)

@@ -4,14 +4,15 @@ img_path="Images/ISIC2019/Images"
 mask_path="Images/ISIC2019/Masks"
 
 inst="instance"
-pool="max"
+pool="mask_max"
 backbone="resnet18"
 
-ckpt="Pretrained_Models/$backbone/MIL_$inst-Pool_$pool/best_checkpoint.pth"
+ckpt="Pretrained_Models/$backbone/mask_val_on/MIL_$inst-Pool_$pool/best_checkpoint.pth"
 
 python main.py \
 	--visualize \
 	--wandb \
+	--mask \
 	--mil_type $inst \
 	--pooling_type $pool \
 	--num_workers 8 \
