@@ -10,9 +10,8 @@ from torchvision.datasets.folder import find_classes
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.data import create_transform
 
-
 class SkinCancerDataset(Dataset):
-    
+
     def __init__(self, 
                  image_dir, 
                  mask_dir=None, 
@@ -31,7 +30,7 @@ class SkinCancerDataset(Dataset):
         self.classes, self.class_to_idx = find_classes(self.image_dir)
         
         if not mask_is_val and not is_train:
-            self.mask_dir = None
+            self.mask_dir=None
             
         for label in os.listdir(self.image_dir):
 

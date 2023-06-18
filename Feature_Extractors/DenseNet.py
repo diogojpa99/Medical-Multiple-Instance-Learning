@@ -133,15 +133,17 @@ class DenseTransition(nn.Sequential):
             num_output_features,
             norm_layer=BatchNormAct2d,
             aa_layer=None,
+            last_layer=False,
     ):
         super(DenseTransition, self).__init__()
         self.add_module('norm', norm_layer(num_input_features))
         self.add_module('conv', nn.Conv2d(
             num_input_features, num_output_features, kernel_size=1, stride=1, bias=False))
-        if aa_layer is not None:
-            self.add_module('pool', aa_layer(num_output_features, stride=2))
-        else:
-            self.add_module('pool', nn.AvgPool2d(kernel_size=2, stride=2))
+        if not last_layer:
+            if aa_layer is not None:
+                self.add_module('pool', aa_layer(num_output_features, stride=2))
+            else:
+                self.add_module('pool', nn.AvgPool2d(kernel_size=2, stride=2))
 
 
 class DenseNet(nn.Module):
@@ -231,6 +233,7 @@ class DenseNet(nn.Module):
             self.features.add_module(module_name, block)
             num_features = num_features + num_layers * growth_rate
             transition_aa_layer = None if aa_stem_only else aa_layer
+            
             if i != len(block_config) - 1:
                 self.feature_info += [
                     dict(num_chs=num_features, reduction=current_stride, module='features.' + module_name)]
@@ -240,8 +243,23 @@ class DenseNet(nn.Module):
                     num_output_features=num_features // 2,
                     norm_layer=norm_layer,
                     aa_layer=transition_aa_layer,
+                    last_layer=False,
                 )
                 self.features.add_module(f'transition{i + 1}', trans)
+                num_features = num_features // 2
+                
+            if i == len(block_config) - 1:
+                self.feature_info += [
+                    dict(num_chs=num_features, reduction=current_stride, module='features.' + module_name)]
+                current_stride *= 2
+                botleneck = DenseTransition(
+                    num_input_features=num_features,
+                    num_output_features=num_features // 2,
+                    norm_layer=norm_layer,
+                    aa_layer=None,
+                    last_layer=True,
+                )
+                self.features.add_module(f'transition{i + 1}', botleneck)
                 num_features = num_features // 2
 
         # Final batch norm

@@ -32,6 +32,7 @@ class EmbeddingMIL(nn.Module):
                  dropout=0.1,
                  pooling_type="max",
                  args=None,
+                 is_training=True,
                  device="cuda",
                  patch_extractor_model="resnet18.tv_in1k",
                  patch_extractor:nn.Module = None):
@@ -48,6 +49,7 @@ class EmbeddingMIL(nn.Module):
         self.args = args
         self.device = device
         self.gradients = None
+        self.is_training = is_training
         
     def activations_hook(self, grad):
         self.gradients = grad
@@ -154,8 +156,9 @@ class EmbeddingMIL(nn.Module):
             x = x.reshape(batch_size, self.embedding_size, 14, 14)
 
         # Register Hook
-        if x.requires_grad == True:
-            x.register_hook(self.activations_hook)
+        if not self.is_training:
+            if x.requires_grad == True:
+                x.register_hook(self.activations_hook)
 
         # (2) Transform input to shape(batch_size, N, embedding_size)
         x = x.permute(0, 2, 3, 1)
@@ -169,15 +172,9 @@ class EmbeddingMIL(nn.Module):
         elif self.pooling_type == "topk":
             x = self.TopKPooling(x, self.args.topk)
         elif self.pooling_type == "mask_avg":
-            if mask is not None:
-                x = self.MaskAvgPooling(x, mask)
-            else:
-                x = self.AvgPooling(x)
+            x = self.MaskAvgPooling(x, mask) if mask is not None else self.AvgPooling(x)
         elif self.pooling_type == "mask_max":
-            if mask is not None:
-                x = self.MaskMaxPooling(x, mask)
-            else:
-                x = self.MaxPooling(x)
+            x = self.MaskMaxPooling(x, mask) if mask is not None else self.MaxPooling(x)
         else:
             raise ValueError(f"Invalid pooling_type: {self.pooling_type}. Must be 'max', 'avg', 'topk', 'mask_avg' or 'mask_max'.")
         
@@ -198,6 +195,7 @@ class InstanceMIL(nn.Module):
                  dropout=0.1,
                  pooling_type="max",
                  args=None,
+                 is_training=True,
                  device="cuda",
                  patch_extractor_model="resnet18.tv_in1k",
                  patch_extractor:nn.Module = None):
@@ -213,8 +211,9 @@ class InstanceMIL(nn.Module):
         self.pooling_type = pooling_type.lower()
         self.args = args
         self.device = device
-        self.patch_scores = None
+        self.patch_probs = None
         self.gradients = None
+        self.is_training = is_training
         self.softmax_probs = None
 
     def activations_hook(self, grad):
@@ -317,7 +316,7 @@ class InstanceMIL(nn.Module):
         
         pooled_mask = Mask_Setup(mask) # Transform mask into shape (Batch_size, N)
         masked_probs = probs[:,:,0] * pooled_mask # Apply mask to the probabilities of the melanoma class (MEL:0) 
-
+        
         # Compute masked mean for each bag
         pooled_probs,_ = torch.max(masked_probs, dim=1)
         pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1)
@@ -345,8 +344,9 @@ class InstanceMIL(nn.Module):
             x = x.reshape(batch_size, self.embedding_size, 14, 14)
         
         # Register Hook to have access to the gradients
-        if x.requires_grad == True:
-            x.register_hook(self.activations_hook)
+        if not self.is_training:
+            if x.requires_grad == True:
+                x.register_hook(self.activations_hook)
         
         # (2) Transform input to shape(batch_size, N, embedding_size)
         x = x.permute(0, 2, 3, 1)
@@ -364,7 +364,7 @@ class InstanceMIL(nn.Module):
         # (6) Apply softmax to the scores
         x = self.Softmax(x)
         
-        # Save the scores for each patch
+        # Save the softmax probs for each patch
         self.save_patch_probs(x)
         
         # (7) Apply pooling to obtain the bag representation
@@ -375,15 +375,9 @@ class InstanceMIL(nn.Module):
         elif self.pooling_type == "topk":
             x = self.TopKPooling(x, self.args.topk)
         elif self.pooling_type == "mask_avg":
-            if mask is not None:
-                x = self.MaskAvgPooling(x, mask)
-            else:
-                x = self.AvgPooling(x)
+            x = self.MaskAvgPooling(x, mask) if mask is not None else self.AvgPooling(x)
         elif self.pooling_type == "mask_max":
-            if mask is not None:
-                x = self.MaskMaxPooling(x, mask)
-            else:
-                x = self.MaxPooling(x)
+            x = self.MaskMaxPooling(x, mask) if mask is not None else self.MaxPooling(x)
         else:
             raise ValueError(f"Invalid pooling_type: {self.pooling_type}. Must be 'max', 'avg', 'topk', 'mask_avg' or 'mask_max'.")
         
@@ -403,8 +397,7 @@ def Mask_Setup(mask):
         mask (torxh.Tensor):Binary mask of shape (Batch_size, 1, 224, 224).
     Returns:
         torch.tensor: Binary mask of shape (Batch_size, N).
-    """
-        
+    """ 
     mask = F.max_pool2d(mask, kernel_size=16, stride=16)  # Transform Mask into shape (Batch_size, 1, 14, 14)
     mask = mask.reshape(mask.size(0), mask.size(2)*mask.size(3)) # Reshape mask to shape (Batch_size, N)
     
@@ -423,7 +416,6 @@ def Pretrained_Feature_Extractures(feature_extractor, args) -> str:
     Returns:
         str: Path to the checkpoint of the feature extractor model.
     """
-    
     checkpoints = ['https://download.pytorch.org/models/resnet18-5c106cde.pth', 
                    'https://download.pytorch.org/models/resnet50-19c8e357.pth', 
                    'https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth',

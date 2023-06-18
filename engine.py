@@ -31,8 +31,7 @@ def train_step(model: torch.nn.Module,
     train_loss, train_acc = 0, 0
     train_stats = {}
     lr_num_updates = epoch * len(dataloader)
-    preds = []
-    targs = []
+    preds = []; targs = []
 
     # Loop through data loader data batches
     for batch_idx, (input, target, input_idx, mask) in enumerate(dataloader):
@@ -50,8 +49,7 @@ def train_step(model: torch.nn.Module,
         train_loss += loss.item() 
         
         if loss_scaler is not None:
-            # this attribute is added by timm on one optimizer (adahessian)
-            is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
+            is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order # this attribute is added by timm on one optimizer (adahessian)
             loss_scaler(loss, optimizer, clip_grad=max_norm,
                         parameters=model.parameters(), create_graph=is_second_order)
         else:
@@ -72,12 +70,10 @@ def train_step(model: torch.nn.Module,
         predictions = torch.argmax(bag_prob, dim=1)
         train_acc += (predictions == target).sum().item()/len(predictions)
         
-        preds.append(predictions.cpu().numpy())
-        targs.append(target.cpu().numpy())
+        preds.append(predictions.cpu().numpy()); targs.append(target.cpu().numpy())
         
     # Adjust metrics to get average loss and accuracy per batch 
-    train_loss = train_loss / len(dataloader)
-    train_acc = train_acc / len(dataloader)
+    train_loss = train_loss / len(dataloader); train_acc = train_acc / len(dataloader)
 
     train_stats['train_loss'] = train_loss
     train_stats['train_acc'] = train_acc
@@ -89,8 +85,7 @@ def train_step(model: torch.nn.Module,
         wandb.log({"Train LR":optimizer.param_groups[0]['lr']},step=epoch)
         
     # Compute Metrics
-    preds=np.concatenate(preds)
-    targs=np.concatenate(targs)
+    preds=np.concatenate(preds); targs=np.concatenate(targs)
     train_stats['confusion_matrix'], train_stats['f1_score'] = confusion_matrix(targs, preds), f1_score(targs, preds, average=None) 
     train_stats['precision'], train_stats['recall'] = precision_score(targs, preds, average=None), recall_score(targs, preds, average=None)
     train_stats['bacc'] = balanced_accuracy_score(targs, preds)
@@ -98,6 +93,7 @@ def train_step(model: torch.nn.Module,
     
     return train_stats
 
+@torch.no_grad()
 def evaluation(model: torch.nn.Module, 
                dataloader: torch.utils.data.DataLoader, 
                criterion: torch.nn.Module, 
@@ -114,39 +110,30 @@ def evaluation(model: torch.nn.Module,
     test_loss, test_acc = 0, 0
     results = {}
     
-    for input, target , input_idxs, mask in dataloader:
+    for input, target, input_idxs, mask in dataloader:
         
         input, target, mask = input.to(device, non_blocking=True), target.to(device, non_blocking=True), mask.to(device, non_blocking=True)
             
         # Compute output
-        with torch.no_grad():
-            
-            if not args.mask_val:
-                bag_prob = model(input, None)
-            else:
-                bag_prob = model(input, mask)
-                
-            loss = criterion(bag_prob, target)
-            test_loss += loss.item()
+        bag_prob = model(input, None) if not args.mask_val else model(input, mask)
+        loss = criterion(bag_prob, target)
+        test_loss += loss.item()
     
         # Calculate and accumulate accuracy
         predictions = torch.argmax(bag_prob, dim=1)
         test_acc += ((predictions == target).sum().item()/len(predictions))
         
-        preds.append(predictions.cpu().numpy())
-        targs.append(target.cpu().numpy())
+        preds.append(predictions.cpu().numpy()); targs.append(target.cpu().numpy())
 
     # Adjust metrics to get average loss and accuracy per batch 
-    test_loss = test_loss/len(dataloader)
-    test_acc = test_acc/len(dataloader)
+    test_loss = test_loss/len(dataloader); test_acc = test_acc/len(dataloader)
 
     if wandb!=print:
         wandb.log({"Val Loss":test_loss},step=epoch)
         wandb.log({"Val Accuracy":test_acc},step=epoch)
         
     # Compute Metrics
-    preds=np.concatenate(preds)
-    targs=np.concatenate(targs)
+    preds=np.concatenate(preds); targs=np.concatenate(targs)
     results['confusion_matrix'], results['f1_score'] = confusion_matrix(targs, preds), f1_score(targs, preds, average=None) 
     results['precision'], results['recall'] = precision_score(targs, preds, average=None), recall_score(targs, preds, average=None)
     results['bacc'] = balanced_accuracy_score(targs, preds)
@@ -254,10 +241,10 @@ def Class_Weighting(train_set, val_set, device, args):
     
     n_train_samples = len(train_set)
     
-    print(f"Classes: {train_set.classes}\n")
-    print(f"Classes map: {train_set.class_to_idx}\n")
-    print(f"Train distribution: {train_dist}\n")
-    print(f"Val distribution: {val_dist}\n")
+    #print(f"Classes: {train_set.classes}\n")
+    print(f"Classes map: {train_set.class_to_idx}")
+    print(f"Train distribution: {train_dist}")
+    print(f"Val distribution: {val_dist}")
     
     if args.class_weights:
         if args.class_weights_type == 'Median':

@@ -92,6 +92,7 @@ def get_args_parser():
     parser.add_argument('--images_path', default='', type=str, help="")
     parser.add_argument('--visualize_num_images', default=8, type=int, help="")
     parser.add_argument('--vis_mask_path', default='', type=str, help="")
+    parser.add_argument('--vis_num', default=1, type=int, help="")
     
     # Imbalanced dataset parameters
     parser.add_argument('--class_weights', action='store_true', default=True, help='Enabling class weighting')
@@ -204,6 +205,9 @@ def get_args_parser():
     return parser
 
 def main(args):
+    
+    if args.visualize or args.evaluate or args.finetune:
+        args.training = False
 
     # Start a new wandb run to track this script
     if args.wandb:
@@ -228,8 +232,8 @@ def main(args):
             }
         )
         wandb.run.name = args.run_name  
-    """ elif args.debug:
-        wandb=print """
+    elif args.debug:
+        wandb=print
     
     # Print arguments
     print("----------------- Args -------------------")
@@ -240,12 +244,10 @@ def main(args):
     if (args.pooling_type == 'mask_max' or args.pooling_type == 'mask_avg') and not args.mask:
         raise ValueError('Masked pooling type requires mask flag to be True.') 
     
-    # Set device
-    device = args.gpu if torch.cuda.is_available() else "cpu"
+    device = args.gpu if torch.cuda.is_available() else "cpu" # Set device
     print(f"Device: {device}\n")
-
-    # Fix the seed for reproducibility
-    utils.configure_seed(args.seed)
+    
+    utils.configure_seed(args.seed) # Fix the seed for reproducibility
     cudnn.benchmark = True
     
     ################## Data Setup ##################
@@ -263,7 +265,7 @@ def main(args):
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             pin_memory=args.pin_mem,
-            drop_last=False,
+            drop_last=True,
         )
         data_loader_val = torch.utils.data.DataLoader(
             val_set, sampler=sampler_val,
@@ -288,7 +290,6 @@ def main(args):
                           drop_path_rate=0.,
                           drop_block_rate=0.,
                           feature_extractor=True)
-        
     elif args.feature_extractor == 'resnet50.tv_in1k':
         model_args = dict(block=resnet.Bottleneck, 
                           layers=[3, 4, 6], 
@@ -297,7 +298,6 @@ def main(args):
                           drop_path_rate=0.,
                           drop_block_rate=0.,
                           feature_extractor=True)
-        
     elif args.feature_extractor == 'deit_small_patch16_224':
         num_chs = 384
         model_args = dict(img_size=args.input_size,
@@ -309,7 +309,6 @@ def main(args):
                           drop_path_rate=args.drop_path,
                           attn_drop_rate=0.,
                           feature_extractor=True)
-        
     elif args.feature_extractor == 'deit_base_patch16_224':
         num_chs = 768
         model_args = dict(img_size=args.input_size,
@@ -321,17 +320,14 @@ def main(args):
                           drop_path_rate=args.drop_path,
                           attn_drop_rate=0.,
                           feature_extractor=True)
-        
     elif args.feature_extractor == 'vgg16.tv_in1k': 
         model_args = dict(cfg=[64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512],
                           drop_rate=args.drop,
                           feature_extractor=True)
-        
     elif args.feature_extractor == 'densenet169.tv_in1k':
         model_args = dict(block_config=(6, 12, 32),
                           drop_rate=args.drop,
                           feature_extractor=True)
-        
     elif args.feature_extractor == 'efficientnet_b3':
         model_args = dict(drop_rate=0.3,
                           drop_path_rate=0.2,
@@ -340,7 +336,6 @@ def main(args):
     else:
         raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
      
-   
     feature_extractor = create_model(model_name=args.feature_extractor,
                                     pretrained=False,  
                                     **dict(model_args))
@@ -348,24 +343,22 @@ def main(args):
     if args.feature_extractor=='resnet18.tv_in1k' or args.feature_extractor=='resnet50.tv_in1k':
         if feature_extractor.feature_info[-1]['module'] == 'layer3':
             num_chs = feature_extractor.feature_info[-1]['num_chs']
-            
     elif args.feature_extractor=='vgg16.tv_in1k':
         num_chs = feature_extractor.feature_info[-1]['num_chs']
-        
     elif args.feature_extractor=='densenet169.tv_in1k':
         num_chs = feature_extractor.feature_info[-1]['num_chs']
-
     elif args.feature_extractor=='efficientnet_b3':
-        #num_chs = feature_extractor.feature_info[-1]['num_chs']
         num_chs = list(feature_extractor.named_parameters())[-1][1].shape[0]
     
     feature_extractor.to(device)
     args.pretrained_feature_extractor_path = mil.Pretrained_Feature_Extractures(args.feature_extractor, args)
+    if args.training:
+        if args.pretrained_feature_extractor_path: # Load the pretrained feature extractor
+            utils.Load_Pretrained_FeatureExtractor(args.pretrained_feature_extractor_path, feature_extractor, args)
             
     ############################ Define the MIL Model ############################
         
     if args.mil_type == 'instance':
-        
         model = mil.InstanceMIL(num_classes=args.nb_classes, 
                                 N=(args.input_size // args.patch_size)**2,
                                 embedding_size=num_chs,
@@ -373,11 +366,10 @@ def main(args):
                                 pooling_type=args.pooling_type,
                                 device=device,
                                 args=args,
+                                is_training=args.training,
                                 patch_extractor_model=args.feature_extractor,
                                 patch_extractor=feature_extractor)
-        
     elif args.mil_type == 'embedding':
-        
         model = mil.EmbeddingMIL(num_classes=args.nb_classes, 
                                 N=(args.input_size // args.patch_size)**2,
                                 embedding_size=num_chs,
@@ -385,9 +377,9 @@ def main(args):
                                 pooling_type=args.pooling_type,
                                 device=device,
                                 args=args,
+                                is_training=args.training,
                                 patch_extractor_model=args.feature_extractor,
                                 patch_extractor=feature_extractor)
-        
     elif args.mil_type == 'attention':
         raise NotImplementedError('This MIL implementation does not support this MIL type..yet!')
         
@@ -398,7 +390,6 @@ def main(args):
     
     model_ema = None 
     if args.model_ema:
-        print('-> Creating EMA model\n')
         model_ema = ModelEma(model,decay=args.model_ema_decay, device='cpu' if args.model_ema_force_cpu else '', resume='')
             
     ################## Define Training Parameters ##################
@@ -407,8 +398,7 @@ def main(args):
     output_dir = Path(args.output_dir)
         
     if args.data_path:
-        # Number of parameters
-        n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad) 
         print(f"Number of parameters: {n_parameters}\n")
         
         # (1) Define the class weights
@@ -418,11 +408,8 @@ def main(args):
         optimizer = create_optimizer(args=args, model=model)
 
         # Define the loss scaler
-        if args.loss_scaler:
-            loss_scaler = NativeScaler()
-        else:
-            loss_scaler = None
-        
+        loss_scaler = NativeScaler() if args.loss_scaler else None
+
         # (3) Create scheduler
         if args.lr_scheduler:
             if args.sched == 'exp':
@@ -437,84 +424,53 @@ def main(args):
     ########################## Training or evaluating ###########################
     
     if args.resume:
-        
         utils.Load_Pretrained_MIL_Model(path=args.resume, model=model, args=args)
         
         if args.visualize:
-            print('----------------- Visualization -------------------')
-            
-            if args.mil_type == 'instance':
-                if args.pooling_type == 'max' or args.pooling_type == 'mask_max':
-                    visualization.Visualize_Instance_Activation_Binary_Max(model=model, datapath=args.images_path, maskpath=args.vis_mask_path, outputdir=output_dir, args=args)
-                    #visualization.Visualize_Activation_Binary_InstanceMax_loader(model=model, dataloader=data_loader_val, outputdir=output_dir, args=args)
-                else:
-                    visualization.Visualize_Instance_Activation_Binary(model=model, datapath=args.images_path, maskpath=args.vis_mask_path, outputdir=output_dir, args=args)
-            #visualization.Visualize_ActivationMaps(model=model, datapath=args.images_path, outputdir=output_dir, args=args)
-            elif args.mil_type == 'embedding':
-                visualization.Visualize_Embedding_Activation_Binary(model=model, datapath=args.images_path, maskpath=args.vis_mask_path, outputdir=output_dir, args=args)
-
-            return
+            print('******* Starting visualization process. *******')
+            if args.nb_classes == 2:
+                val_loader = visualization.VisualizationLoader_Binary(val_set, args)
+                if args.mil_type == 'instance':
+                    visualization.Visualize_Activation_Instance_Binary(model=model, dataloader=val_loader, outputdir=output_dir, args=args)
+                elif args.mil_type == 'embedding':
+                    visualization.Visualize_Activation_Embedding_Binary(model=model, dataloader=val_loader, outputdir=output_dir, args=args)
+                return
 
         elif args.evaluate:
-            print('----------------- Evaluation -------------------')
+            print('******* Starting evaluation process. *******')
             best_results = engine.evaluation(model=model,
                                              dataloader=data_loader_val,
                                              criterion=torch.nn.NLLLoss(), 
                                              epoch=0, 
                                              device=device,
                                              args=args)
-            log_list = [];  total_time_str = '0'
-            """ log_args = [
-                'Model architecture: {}'.format(utils.model_summary(model, args)), 'Feature Pretrained on: {}'.format(args.feature_extractor_pretrained_dataset), 
-                'Model Trained on: {}'.format(args.dataset), 'MIL Type: {}'.format(args.mil_type), 'Pooling Type: {}'.format(args.pooling_type)] """
-        
+            total_time_str = '0'
+
     elif args.training or args.finetune:
-        
-        """ log_args = [
-            '----------------------- Logs for Training ----------------------',
-            'Feature Pretrained on: {}'.format(args.feature_extractor_pretrained_dataset), 'Model Trained on: {}'.format(args.dataset),
-            'number of classes: {}'.format(args.nb_classes), 'number of epochs: {}'.format(args.epochs), 'batch size: {}'.format(args.batch_size), 
-            'Init learning rate: {}'.format(args.lr), 'scheduler: {}'.format(args.sched), 'Warmup lr: {}'.format(args.warmup_lr),
-            'Decay rate: {}'.format(args.decay_rate), 'Lr Decay Epochs: {}'.format(args.decay_epochs),
-            'optimizer: {}'.format(args.opt), 'drop: {}'.format(args.drop),
-            'loss function: {}'.format(criterion), 'class weights: {}'.format(class_weights), 'weight decay: {}'.format(args.weight_decay),
-            'momentum: {}'.format(args.momentum), 'Early-Stopping Patience: {}'.format(args.patience), 'Early-Stopping Delta: {}'.format(args.delta),
-            'MIL Type: {}'.format(args.mil_type), 'Pooling Type: {}'.format(args.pooling_type),
-            'Model architecture:\n{}'.format(utils.model_summary(model, args)),
-            '---------------- Start training for {} epochs ----------------'.format(args.epochs)
-        ] """
-        
         start_time = time.time()  
-              
-        # Load the pretrained feature extractor
-        if args.pretrained_feature_extractor_path:
-            utils.Load_Pretrained_FeatureExtractor(args.pretrained_feature_extractor_path, feature_extractor, args)
-            
+                          
         train_results = {'loss': [], 'acc': [] , 'lr': []}
         val_results = {'loss': [], 'acc': [], 'f1': [], 'cf_matrix': [], 'bacc': [], 'precision': [], 'recall': []}
         best_val_bacc = 0.0
-        freeze_patch_extractor_flag = False
-        log_list = [] 
-        
-        # Define Early Stopping
+        freeze_patch_extractor_flag = False      
+          
         early_stopping = engine.EarlyStopping(patience=args.patience, verbose=True, delta=args.delta, path=str(output_dir) +'/checkpoint.pth')
        
-        print(f"--------------------- Start training for {(args.epochs + args.cooldown_epochs)} epochs. ------------------------") 
+        print(f"******* Start training for {(args.epochs + args.cooldown_epochs)} epochs. *******") 
         for epoch in range(args.start_epoch, (args.epochs + args.cooldown_epochs)):
             
-            if epoch < args.classifier_warmup_epochs and freeze_patch_extractor_flag == False:
+            if epoch < args.classifier_warmup_epochs and freeze_patch_extractor_flag==False:
                 freeze_patch_extractor_flag = engine.train_patch_extractor(model=model,
                                                                            current_epoch=epoch,
                                                                            warmup_epochs=args.classifier_warmup_epochs,
                                                                            flag=freeze_patch_extractor_flag,
                                                                            args=args)
-            elif epoch >= args.classifier_warmup_epochs and freeze_patch_extractor_flag == True:
+            elif epoch >= args.classifier_warmup_epochs and freeze_patch_extractor_flag==True:
                 freeze_patch_extractor_flag = engine.train_patch_extractor(model=model,
                                                                            current_epoch=epoch,
                                                                            warmup_epochs=args.classifier_warmup_epochs,
                                                                            flag=freeze_patch_extractor_flag,
                                                                            args=args)
-            
             train_stats = engine.train_step(model=model,
                                             dataloader=data_loader_train,
                                             criterion=criterion,
@@ -566,9 +522,7 @@ def main(args):
                         checkpoint_dict['model_ema'] = get_state_dict(model_ema)
                     utils.save_on_master(checkpoint_dict, checkpoint_path)
                 print(f"\tBest Val. Bacc: {(best_val_bacc*100):.2f}% |[INFO] Saving model as 'best_checkpoint.pth'")
-                    
-            #log_list.append([f"Epoch: {epoch+1} | lr: {train_stats['train_lr']:.5f} | Train Loss: {train_stats['train_loss']:.4f} | Train Acc: {train_stats['train_acc']:.4f} | Val. Loss: {results['loss']:.4f} | Val. Acc: {results['acc1']:.4f} | Val. Bacc: {results['bacc']:.4f} | F1-score: {np.mean(results['f1_score']):.4f} | Best Val. Bacc: {(best_val_bacc*100):.2f}% |"])
-            
+                        
             # Early stopping
             early_stopping(results['loss'], model)
             if early_stopping.early_stop:
@@ -586,20 +540,7 @@ def main(args):
     # Plotting
     if not args.visualize:
         utils.plot_confusion_matrix(best_results["confusion_matrix"], {'MEL': 0, 'NV': 1}, output_dir=output_dir, args=args)
-        
-        # Write the best test stats in a file
-        """ log_test_stats = [
-            '\n---------------- Val. stats for the best model ----------------',
-            f"Acc: {best_results['acc1']:.3f} | Bacc: {best_results['bacc']:.3f} | F1-score: {np.mean(best_results['f1_score']):.3f} | ",
-            f"Precision[MEL]: {best_results['precision'][0]:.3f} | Precision[NV]: {best_results['precision'][1]:.3f} | ",
-            f"Recall[MEL]: {best_results['recall'][0]:.3f} | Recall[NV]: {best_results['recall'][1]:.3f} | ",
-            f'Training time {total_time_str}'
-        ] """
-        
-        """ if args.output_dir and utils.is_main_process():
-            with (output_dir / "log.txt").open("a") as f:
-                f.write('\n'.join(log_args) + '\n' + '\n'.join(str(item) for item in log_list) + '\n' + '\n'.join(log_test_stats) + '\n') """
-        
+                
         if not args.evaluate:
             print('\n---------------- Train stats for the last epoch ----------------\n',
                 f"Acc: {train_stats['acc1']:.3f} | Bacc: {train_stats['bacc']:.3f} | F1-score: {np.mean(train_stats['f1_score']):.3f} | \n",

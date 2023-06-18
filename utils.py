@@ -14,6 +14,8 @@ import torch.distributed as dist
 from torchinfo import summary
 import torch.nn.functional as F
 
+import Feature_Extractors.DenseNet as densenet
+
 def Plot_TrainSet(trainset, args):
     
     output_dir = args.output_dir 
@@ -157,6 +159,15 @@ def Load_Pretrained_FeatureExtractor(path, model, args):
         if k in checkpoint and checkpoint[k].shape != state_dict[k].shape:
             print(f"Removing key {k} from pretrained checkpoint")
             del checkpoint[k] """
+    
+    # Compare the keys of the checkpoint and the model
+    if args.feature_extractor == 'deit_small_patch16_224' or args.feature_extractor == 'deit_base_patch16_224':
+        checkpoint = checkpoint['model']
+    elif args.feature_extractor == 'densenet169.tv_in1k':
+        checkpoint = densenet._filter_torchvision_pretrained(checkpoint)
+
+    if len(set(state_dict.keys()).intersection(set(checkpoint.keys()))) == 0:
+        print("ALERT: No shared keys between checkpoint and model. Using random initialization.\n")
 
     # Load the pre-trained weights into the model
     model.load_state_dict(checkpoint, strict=False)
@@ -253,4 +264,4 @@ def Load_Pretrained_MIL_Model(path, model, args):
         print(f"Removing key {k} from pretrained checkpoint")
         del checkpoint['model'][k]
             
-    model.load_state_dict(checkpoint['model'])
+    model.load_state_dict(checkpoint['model'], strict=True)
