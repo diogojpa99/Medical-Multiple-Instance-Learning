@@ -232,8 +232,8 @@ def main(args):
             }
         )
         wandb.run.name = args.run_name  
-    elif args.debug:
-        wandb=print
+    """ elif args.debug:
+        wandb=print """
     
     # Print arguments
     print("----------------- Args -------------------")

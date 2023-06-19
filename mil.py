@@ -22,7 +22,7 @@ class MlpCLassifier(nn.Module):
         if self.drop:
             x = F.dropout(x, p=self.drop, training=self.training)
         return self.mlp(x)
-   
+    
 class EmbeddingMIL(nn.Module):
     
     def __init__(self, 

@@ -15,7 +15,7 @@ import mil
 
 def ShowVis(activation_map, img):
     
-    heatmap = torch.nn.functional.interpolate(activation_map, scale_factor=(224//14), mode='bilinear',align_corners=True)  #14->224
+    heatmap = torch.nn.functional.interpolate(activation_map, scale_factor=(224//14), mode='bilinear', align_corners=True)  #14->224
     heatmap = heatmap.reshape(224, 224).data.cpu().numpy() 
     heatmap = cv2.applyColorMap(np.uint8(heatmap* 255), cv2.COLORMAP_JET)        
     heatmap = np.float32(heatmap) / 255
@@ -83,8 +83,8 @@ def VisualizationLoader_Binary(val_set:torch.utils.data.Dataset, args=None):
             break
 
     # (2) Shuffle the indices randomly
-    random.shuffle(mel_idx)
-    random.shuffle(nv_idx)
+    """ random.shuffle(mel_idx)
+    random.shuffle(nv_idx) """
 
     # Select an equal number of indices for each class
     num_samples_per_class = min(len(mel_idx), len(nv_idx))
@@ -181,8 +181,7 @@ def Visualize_Activation_Instance_Binary(model: torch.nn.Module,
             # (6) Transform to (batch_size, num_classes, 14, 14)
             patch_prob_map = patch_prob.permute(0, 2, 1)
             patch_prob_map = patch_prob_map.reshape(1, 2, 14, 14)
-
-                    
+   
             # (7) Normalize the input image
             img = input.permute(0, 2, 3, 1).squeeze(0).data.cpu().numpy()
             img = (img - np.min(img)) / (np.max(img) - np.min(img))    
@@ -194,7 +193,7 @@ def Visualize_Activation_Instance_Binary(model: torch.nn.Module,
             activation_map = patch_prob_map[:,0, :, :].unsqueeze(0)
             heatmap = torch.nn.functional.interpolate(activation_map, scale_factor=(224//14), mode='bilinear',align_corners=True)  #14->224
             heatmap = heatmap.reshape(224, 224).data.cpu().numpy() 
-            vis = ShowVis(activation_map, img, False)
+            vis = ShowVis(activation_map, img)
             
             # (10) Grad CAM for 'MEl' class
             grad_cam_mel = Grad_CAM(input, model, bag_prob, 0, img)
@@ -227,7 +226,7 @@ def Visualize_Activation_Instance_Binary(model: torch.nn.Module,
         title = f"| MIL Class Activation Maps ({args.dataset}) | MIL Type: {args.mil_type} | Pooling Type: {args.pooling_type} |"
         plt.suptitle(title, fontsize=20)
         plt.subplots_adjust(wspace=0.1, hspace=0.1)
-        plt.savefig(str(outputdir) + f'/MIL-{args.mil_type}-{args.pooling_type}-{args.dataset}-Class_Activations-Batch_{j}.jpg', dpi=300, bbox_inches='tight')  
+        plt.savefig(str(outputdir) + f'/MIL-{args.mil_type}-{args.pooling_type}-{args.dataset}-Class_Activations-sBatch_{j}.jpg', dpi=300, bbox_inches='tight')  
         
         if j == (args.vis_num-1):
             break
@@ -287,7 +286,7 @@ def Visualize_Activation_Embedding_Binary(model: torch.nn.Module,
         title = f"| MIL Class Activation Maps ({args.dataset}) | MIL Type: {args.mil_type} | Pooling Type: {args.pooling_type} |"
         plt.suptitle(title, fontsize=20)
         plt.subplots_adjust(wspace=0.1, hspace=0.1)
-        plt.savefig(str(outputdir) + f'/MIL-{args.mil_type}-{args.pooling_type}-{args.dataset}-Class_Activations-Batch_{j}.jpg', dpi=300, bbox_inches='tight')  
+        plt.savefig(str(outputdir) + f'/MIL-{args.mil_type}-{args.pooling_type}-{args.dataset}-Class_Activations-sBatch_{j}.jpg', dpi=300, bbox_inches='tight')  
         
         if j == (args.vis_num-1):
             break
