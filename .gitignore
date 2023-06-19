@@ -179,3 +179,8 @@ Aux_Code/
 
 # Grid_Search
 GridSearch_Scripts/
+GridSearch_Scripts/delete_checkpoint.sh
+GridSearch_Scripts/Grid_SearchALL.sh
+GridSearch_Scripts/mil_run.ipynb
+GridSearch_Scripts/save_checkpoints.sh
+GridSearch_Scripts/train_aLa_DEiT.sh

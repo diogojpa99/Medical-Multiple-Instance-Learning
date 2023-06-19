@@ -357,29 +357,24 @@ def main(args):
             utils.Load_Pretrained_FeatureExtractor(args.pretrained_feature_extractor_path, feature_extractor, args)
             
     ############################ Define the MIL Model ############################
-        
+    
+    mil_args = dict(num_classes=args.nb_classes,
+                    N=(args.input_size // args.patch_size) ** 2,
+                    embedding_size=num_chs,
+                    dropout=args.drop,
+                    pooling_type=args.pooling_type,
+                    is_training=args.training,
+                    patch_extractor_model=args.feature_extractor,
+                    patch_extractor=feature_extractor,
+                    device=device,
+                    args=args) 
+    
     if args.mil_type == 'instance':
-        model = mil.InstanceMIL(num_classes=args.nb_classes, 
-                                N=(args.input_size // args.patch_size)**2,
-                                embedding_size=num_chs,
-                                dropout=args.drop,
-                                pooling_type=args.pooling_type,
-                                device=device,
-                                args=args,
-                                is_training=args.training,
-                                patch_extractor_model=args.feature_extractor,
-                                patch_extractor=feature_extractor)
+        model = mil.InstanceMIL(mil_type=args.mil_type, **dict(mil_args))
+        
     elif args.mil_type == 'embedding':
-        model = mil.EmbeddingMIL(num_classes=args.nb_classes, 
-                                N=(args.input_size // args.patch_size)**2,
-                                embedding_size=num_chs,
-                                dropout=args.drop,
-                                pooling_type=args.pooling_type,
-                                device=device,
-                                args=args,
-                                is_training=args.training,
-                                patch_extractor_model=args.feature_extractor,
-                                patch_extractor=feature_extractor)
+        model = mil.EmbeddingMIL(mil_type=args.mil_type, **dict(mil_args))
+        
     elif args.mil_type == 'attention':
         raise NotImplementedError('This MIL implementation does not support this MIL type..yet!')
         
