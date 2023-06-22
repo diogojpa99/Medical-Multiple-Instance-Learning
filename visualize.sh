@@ -1,8 +1,5 @@
-now=$(date +"%Y%m%d_%H%M%S")
-
-
-mil_types=("embedding")
-pool_types=("avg"  "mask_avg")
+mil_types=("instance" "embedding")
+pool_types=("max" "avg" "topk" "mask_max" "mask_avg")
 
 feature_ex="resnet18"
 
@@ -48,10 +45,8 @@ do
 done
 
 
-now=$(date +"%Y%m%d_%H%M%S")
-
-mil_types=("embedding")
-pool_types=("avg"  "mask_avg")
+mil_types=("instance" "embedding")
+pool_types=("max" "avg" "topk" "mask_max" "mask_avg")
 
 feature_ex="resnet18"
 
@@ -96,7 +91,6 @@ do
 	done
 done
 
-now=$(date +"%Y%m%d_%H%M%S")
 
 mil_types=("instance" "embedding")
 pool_types=("max" "avg" "topk" "mask_max" "mask_avg")
