@@ -175,7 +175,7 @@ def Visualize_Activation_Instance_Binary(model: torch.nn.Module,
                         
             # (5) obtain the instance softmax scores
             patch_prob = model.get_patch_probs()
-            if args.mask_val:
+            if args.pooling_type == 'mask_max' or args.pooling_type == 'mask_avg':
                 patch_prob = ProcessMaskedPatchProbs(patch_prob, mask)
             
             # (6) Transform to (batch_size, num_classes, 14, 14)
@@ -191,8 +191,6 @@ def Visualize_Activation_Instance_Binary(model: torch.nn.Module,
 
             # (9) Obtain the class probabilities for 'MEL' heatmap 
             activation_map = patch_prob_map[:,0, :, :].unsqueeze(0)
-            heatmap = torch.nn.functional.interpolate(activation_map, scale_factor=(224//14), mode='bilinear',align_corners=True)  #14->224
-            heatmap = heatmap.reshape(224, 224).data.cpu().numpy() 
             vis = ShowVis(activation_map, img)
             
             # (10) Grad CAM for 'MEl' class
@@ -222,7 +220,7 @@ def Visualize_Activation_Instance_Binary(model: torch.nn.Module,
                 axs[3, i].imshow(grad_cam_nv)
                 axs[3, i].set_title("Grad-CAM [NV]")
             axs[3, i].axis('off');
-           
+                       
         title = f"| MIL Class Activation Maps ({args.dataset}) | MIL Type: {args.mil_type} | Pooling Type: {args.pooling_type} |"
         plt.suptitle(title, fontsize=20)
         plt.subplots_adjust(wspace=0.1, hspace=0.1)

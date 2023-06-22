@@ -41,15 +41,17 @@ class SkinCancerDataset(Dataset):
                 
                 if dataset == 'ISIC2019-Clean':
                     img_idx = img_name[:12] 
-                elif dataset == 'PH2' or dataset == 'Derm7pt':
+                elif dataset == 'PH2':
                     img_idx = img_name
+                elif dataset == 'Derm7pt':
+                    img_idx = img_name[:-4]
                     
                 img_path = os.path.join(label_dir, img_name)
                 
                 if self.mask_dir is not None:
-                    if dataset == 'ISIC2019-Clean':
+                    if dataset == 'ISIC2019-Clean' or dataset == 'Derm7pt':
                         mask_path = os.path.join(self.mask_dir, label, f"{img_idx}.png")
-                    elif dataset == 'PH2' or dataset == 'Derm7pt':
+                    elif dataset == 'PH2':
                         mask_path = os.path.join(self.mask_dir, label, img_idx)
                 else:
                     mask_path = None

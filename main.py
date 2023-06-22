@@ -236,13 +236,14 @@ def main(args):
         wandb=print """
     
     # Print arguments
-    print("----------------- Args -------------------")
-    for arg in vars(args):
-        print(f"{arg}: {getattr(args, arg)}")
-    print("------------------------------------------\n")
+    if args.training:
+        print("----------------- Args -------------------")
+        for arg in vars(args):
+            print(f"{arg}: {getattr(args, arg)}")
+        print("------------------------------------------\n")
     
-    if (args.pooling_type == 'mask_max' or args.pooling_type == 'mask_avg') and not args.mask:
-        raise ValueError('Masked pooling type requires mask flag to be True.') 
+    """ if (args.pooling_type == 'mask_max' or args.pooling_type == 'mask_avg') and not args.mask:
+        raise ValueError('Masked pooling type requires mask flag to be True.')  """
     
     device = args.gpu if torch.cuda.is_available() else "cpu" # Set device
     print(f"Device: {device}\n")

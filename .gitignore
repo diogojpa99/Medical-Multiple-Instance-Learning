@@ -184,3 +184,13 @@ GridSearch_Scripts/Grid_SearchALL.sh
 GridSearch_Scripts/mil_run.ipynb
 GridSearch_Scripts/save_checkpoints.sh
 GridSearch_Scripts/train_aLa_DEiT.sh
+
+# Visualization
+visualization/zInit_Experiments/
+visualization/embedding-topk/
+visualization/embedding-max/
+visualization/embedding-mask_max/
+visualization/embedding-mask_avg/
+visualization/instance-avg/
+visualization/instance-mask_avg/
+visualization/instance-mask_max/
