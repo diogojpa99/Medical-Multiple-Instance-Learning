@@ -189,3 +189,6 @@ visualization/embedding-mask_avg/
 visualization/instance-avg/
 visualization/instance-mask_avg/
 visualization/instance-mask_max/
+
+# Pretrained EViTs
+Feature_Extractors/Pretrained_EViTs/

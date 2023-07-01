@@ -3,7 +3,7 @@ import pandas as pd
 import seaborn as sns
 import numpy as np
 import random
-
+import io
 import os
 from pathlib import Path
 
@@ -153,25 +153,39 @@ def Load_Pretrained_FeatureExtractor(path, model, args):
         checkpoint = torch.load(path, map_location=torch.device('cpu'))
 
     state_dict = model.state_dict()
-        
-    """ # Remove last layer
-    for k in ['conv_head.weight', 'conv_head.bias']:
-        if k in checkpoint and checkpoint[k].shape != state_dict[k].shape:
-            print(f"Removing key {k} from pretrained checkpoint")
-            del checkpoint[k] """
-    
+
     # Compare the keys of the checkpoint and the model
-    if args.feature_extractor == 'deit_small_patch16_224' or args.feature_extractor == 'deit_base_patch16_224':
+    if args.feature_extractor == 'deit_small_patch16_224' or args.feature_extractor == 'deit_base_patch16_224'or args.feature_extractor == 'deit_small_patch16_shrink_base':
         checkpoint = checkpoint['model']
+        Load_Pretrained_ViT_Interpolate_Pos_Embed(model, checkpoint)
+        
     elif args.feature_extractor == 'densenet169.tv_in1k':
         checkpoint = densenet._filter_torchvision_pretrained(checkpoint)
 
-    if len(set(state_dict.keys()).intersection(set(checkpoint.keys()))) == 0:
-        print("ALERT: No shared keys between checkpoint and model. Using random initialization.\n")
+    if len(set(state_dict.keys()).intersection(set(checkpoint.keys())))==0:
+        raise RuntimeError("No shared keys between checkpoint and model.")
 
     # Load the pre-trained weights into the model
     model.load_state_dict(checkpoint, strict=False)
-
+    
+def Load_Pretrained_ViT_Interpolate_Pos_Embed(model, checkpoint_model):
+    
+    pos_embed_checkpoint = checkpoint_model['pos_embed']
+    embedding_size = pos_embed_checkpoint.shape[-1]
+    num_patches = model.patch_embed.num_patches
+    num_extra_tokens = model.pos_embed.shape[-2] - num_patches # height (== width) for the checkpoint position embedding
+    orig_size = int((pos_embed_checkpoint.shape[-2] - num_extra_tokens) ** 0.5) # height (== width) for the new position embedding
+    new_size = int(num_patches ** 0.5) # class_token and dist_token are kept unchanged
+    extra_tokens = pos_embed_checkpoint[:, :num_extra_tokens] # only the position tokens are interpolated
+    
+    pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
+    pos_tokens = pos_tokens.reshape(-1, orig_size, orig_size, embedding_size).permute(0, 3, 1, 2)
+    pos_tokens = torch.nn.functional.interpolate(pos_tokens, size=(new_size, new_size), mode='bicubic', align_corners=False)
+    pos_tokens = pos_tokens.permute(0, 2, 3, 1).flatten(1, 2)
+    
+    new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
+    checkpoint_model['pos_embed'] = new_pos_embed
+    
 def save_model(model: torch.nn.Module,
                target_dir: str,
                model_name: str):
@@ -265,3 +279,12 @@ def Load_Pretrained_MIL_Model(path, model, args):
         del checkpoint['model'][k]
             
     model.load_state_dict(checkpoint['model'], strict=True)
+
+def _load_checkpoint_for_ema(model_ema, checkpoint):
+    """
+    Workaround for ModelEma._load_checkpoint to accept an already-loaded object
+    """
+    mem_file = io.BytesIO()
+    torch.save(checkpoint, mem_file)
+    mem_file.seek(0)
+    model_ema._load_checkpoint(mem_file)

@@ -1,9 +1,11 @@
 import data_setup, utils, mil, engine, visualization
 import Feature_Extractors.ResNet as resnet
-import Feature_Extractors.DEiT as deit, Feature_Extractors.ViT as vit
 import Feature_Extractors.VGG as vgg
 import Feature_Extractors.DenseNet as densenet
 import Feature_Extractors.EfficientNet as efficientnet
+import Feature_Extractors.EViT as evit
+import Feature_Extractors.DEiT as deit, Feature_Extractors.ViT as vit
+
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -37,7 +39,7 @@ def get_args_parser():
     parser.add_argument('--project_name', default='Thesis', help='name of the project')
     parser.add_argument('--hardware', default='Server', choices=['Server', 'Colab', 'MyPC'], help='hardware used')
     parser.add_argument('--run_name', default='MIL', help='name of the run')
-    parser.add_argument('--wandb', action='store_false', default=True, help='whether to use wandb')
+    parser.add_argument('--wandb_flag', action='store_false', default=True, help='whether to use wandb')
     parser.add_argument('--debug', action='store_true', default=False, help='Debug mode')
     
     # Data parameters
@@ -66,7 +68,7 @@ def get_args_parser():
     # Feature Extractor parameters
     parser.add_argument('--feature_extractor', default='resnet18.tv_in1k', type=str, metavar='MODEL',
                         choices=['resnet18.tv_in1k', 'resnet50.tv_in1k', 'deit_small_patch16_224', 'deit_base_patch16_224','vgg16.tv_in1k',
-                                 'densenet169.tv_in1k', 'efficientnet_b3'], 
+                                 'densenet169.tv_in1k', 'efficientnet_b3', 'deit_small_patch16_shrink_base'], 
                         help='Feature Extractor model architecture (default: "resnet18")')
     
     parser.add_argument('--pretrained_feature_extractor_path', default='https://download.pytorch.org/models/resnet18-5c106cde.pth', type=str, 
@@ -76,7 +78,9 @@ def get_args_parser():
                                  'https://dl.fbaipublicfiles.com/deit/deit_base_patch16_224-b5f2ef4d.pth',
                                  'https://download.pytorch.org/models/vgg16-397923af.pth',
                                  'https://download.pytorch.org/models/densenet169-b2777c0a.pth',
-                                 'https://github.com/rwightman/pytorch-image-models/releases/download/v0.1-weights/efficientnet_b3_ra2-cf984f9c.pth'], 
+                                 'https://github.com/rwightman/pytorch-image-models/releases/download/v0.1-weights/efficientnet_b3_ra2-cf984f9c.pth',
+                                 'Feature_Extractors/Pretrained_EViTs/evit-0.7-img224-deit-s.pth',
+                                 'Feature_Extractors/Pretrained_EViTs/evit-0.7-fuse-img224-deit-s.pth'], 
                         metavar='PATH', help="Download the pretrained feature extractor from the given path.")
     
     parser.add_argument('--feature_extractor_pretrained_dataset', default='ImageNet1k', type=str, metavar='DATASET')
@@ -202,6 +206,14 @@ def get_args_parser():
     parser.add_argument('--mask_is_train_path', default='train', type=str, help='path to train directory of multiclass binary segmentation masks')
     parser.add_argument('--mask_val', default='', type=str, help='path to val directory of binary segmentation masks')
     
+    # EViT Parameters
+    parser.add_argument('--fuse_token', action='store_true', help='whether to fuse the inattentive tokens')
+    parser.add_argument('--base_keep_rate', type=float, default=0.7, help='Base keep rate (default: 0.7)')
+    parser.add_argument('--drop_loc', default='(3, 6, 9)', type=str, help='the layer indices for shrinking inattentive tokens')
+    
+    # *DeiT with cls token
+    parser.add_argument('--cls_token', action='store_true', help='whether to add cls token')
+    
     return parser
 
 def main(args):
@@ -210,7 +222,7 @@ def main(args):
         args.training = False
 
     # Start a new wandb run to track this script
-    if args.wandb:
+    if args.wandb_flag:
         wandb.init(
             project=args.project_name,
             config={
@@ -231,8 +243,9 @@ def main(args):
             "PC": args.hardware,
             }
         )
-        wandb.run.name = args.run_name  
-    """ elif args.debug:
+        wandb.run.name = args.run_name
+          
+    """ if args.debug:
         wandb=print """
     
     # Print arguments
@@ -241,9 +254,13 @@ def main(args):
         for arg in vars(args):
             print(f"{arg}: {getattr(args, arg)}")
         print("------------------------------------------\n")
-    
-    """ if (args.pooling_type == 'mask_max' or args.pooling_type == 'mask_avg') and not args.mask:
-        raise ValueError('Masked pooling type requires mask flag to be True.')  """
+        
+    # Validation regarding the use of segmentation masks
+    if args.pooling_type == 'mask_max' or args.pooling_type == 'mask_avg':
+        if not args.mask:
+            raise ValueError('Masked pooling type requires mask flag to be True.') 
+        if args.feature_extractor == 'deit_small_patch16_shrink_base':
+            raise ValueError('Masked pooling type is not supported for this feature extractor.')
     
     device = args.gpu if torch.cuda.is_available() else "cpu" # Set device
     print(f"Device: {device}\n")
@@ -334,6 +351,17 @@ def main(args):
                           drop_path_rate=0.2,
                           feature_extractor=True,
                           desired_output_size=(args.input_size // args.patch_size))
+    elif args.feature_extractor == 'deit_small_patch16_shrink_base':
+        num_chs = 384
+        model_args = dict(base_keep_rate=args.base_keep_rate,
+                          drop_loc=eval(args.drop_loc),
+                          num_classes=args.nb_classes,
+                          drop_rate=args.drop,
+                          drop_path_rate=args.drop_path,
+                          drop_block_rate=None,
+                          fuse_token=args.fuse_token,
+                          img_size=(args.input_size, args.input_size),
+                          feature_extractor=True)
     else:
         raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
      
@@ -427,10 +455,11 @@ def main(args):
             if args.nb_classes == 2:
                 val_loader = visualization.VisualizationLoader_Binary(val_set, args)
                 if args.mil_type == 'instance':
-                    visualization.Visualize_Activation_Instance_Binary(model=model, dataloader=val_loader, outputdir=output_dir, args=args)
+                    visualization.Visualize_Activation_Instance_Binary(model=model, dataloader=data_loader_val, device=device, outputdir=output_dir, args=args)
                 elif args.mil_type == 'embedding':
-                    visualization.Visualize_Activation_Embedding_Binary(model=model, dataloader=val_loader, outputdir=output_dir, args=args)
-                return
+                    visualization.Visualize_Activation_Embedding_Binary(model=model, dataloader=val_loader, device=device, outputdir=output_dir, args=args)
+            
+            return
 
         elif args.evaluate:
             print('******* Starting evaluation process. *******')
@@ -440,16 +469,14 @@ def main(args):
                                              epoch=0, 
                                              device=device,
                                              args=args)
-            total_time_str = '0'
 
     elif args.training or args.finetune:
+        
         start_time = time.time()  
-                          
         train_results = {'loss': [], 'acc': [] , 'lr': []}
         val_results = {'loss': [], 'acc': [], 'f1': [], 'cf_matrix': [], 'bacc': [], 'precision': [], 'recall': []}
         best_val_bacc = 0.0
         freeze_patch_extractor_flag = False      
-          
         early_stopping = engine.EarlyStopping(patience=args.patience, verbose=True, delta=args.delta, path=str(output_dir) +'/checkpoint.pth')
        
         print(f"******* Start training for {(args.epochs + args.cooldown_epochs)} epochs. *******") 
@@ -525,36 +552,33 @@ def main(args):
                 print("\t[INFO] Early stopping - Stop training")
                 break
             
+            if epoch < 1 and args.mil_type == 'instance':
+                print(f"[INFO] Number of patches used: {model.num_patches}" )
+            
         # Compute the total training time
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        print('Training time {}'.format(total_time_str))
+        print('\n---------------- Train stats for the last epoch ----------------\n',
+            f"Acc: {train_stats['acc1']:.3f} | Bacc: {train_stats['bacc']:.3f} | F1-score: {np.mean(train_stats['f1_score']):.3f} | \n",
+            f"Precision[MEL]: {train_stats['precision'][0]:.3f} | Precision[NV]: {train_stats['precision'][1]:.3f} | \n",
+            f"Recall[MEL]: {train_stats['recall'][0]:.3f} | Recall[NV]: {train_stats['recall'][1]:.3f} | \n",
+            f"Confusion Matrix: {train_stats['confusion_matrix']}\n",
+            f"Training time {total_time_str}\n")
         
-        # Plotting
         utils.plot_loss_and_acc_curves(train_results, val_results, output_dir=output_dir, args=args)
 
-    # Plotting
-    if not args.visualize:
-        utils.plot_confusion_matrix(best_results["confusion_matrix"], {'MEL': 0, 'NV': 1}, output_dir=output_dir, args=args)
-                
-        if not args.evaluate:
-            print('\n---------------- Train stats for the last epoch ----------------\n',
-                f"Acc: {train_stats['acc1']:.3f} | Bacc: {train_stats['bacc']:.3f} | F1-score: {np.mean(train_stats['f1_score']):.3f} | \n",
-                f"Precision[MEL]: {train_stats['precision'][0]:.3f} | Precision[NV]: {train_stats['precision'][1]:.3f} | \n",
-                f"Recall[MEL]: {train_stats['recall'][0]:.3f} | Recall[NV]: {train_stats['recall'][1]:.3f} | \n",
-                f'Confusion Matrix: {train_stats["confusion_matrix"]}\n')
-
-        print('\n---------------- Val. stats for the best model ----------------\n',
-            f"Acc: {best_results['acc1']:.3f} | Bacc: {best_results['bacc']:.3f} | F1-score: {np.mean(best_results['f1_score']):.3f} | \n",
-            f"Precision[MEL]: {best_results['precision'][0]:.3f} | Precision[NV]: {best_results['precision'][1]:.3f} | \n",
-            f"Recall[MEL]: {best_results['recall'][0]:.3f} | Recall[NV]: {best_results['recall'][1]:.3f} | \n",
-            f'Training time {total_time_str}')
-        
-        if wandb!=print:
-            wandb.log({"Best Val. Acc": best_results['acc1'], "Best Val. Bacc": best_results['bacc'], "Best Val. F1-score": np.mean(best_results['f1_score'])})
-            wandb.log({"Best Val. Precision[MEL]": best_results['precision'][0], "Best Val. Precision[NV]": best_results['precision'][1]})
-            wandb.log({"Best Val. Recall[MEL]": best_results['recall'][0], "Best Val. Recall[NV]": best_results['recall'][1]})
-            wandb.log({"Training time": total_time_str})
+    utils.plot_confusion_matrix(best_results["confusion_matrix"], {'MEL': 0, 'NV': 1}, output_dir=output_dir, args=args)
+            
+    print('\n---------------- Val. stats for the best model ----------------\n',
+        f"Acc: {best_results['acc1']:.3f} | Bacc: {best_results['bacc']:.3f} | F1-score: {np.mean(best_results['f1_score']):.3f} | \n",
+        f"Precision[MEL]: {best_results['precision'][0]:.3f} | Precision[NV]: {best_results['precision'][1]:.3f} | \n",
+        f"Recall[MEL]: {best_results['recall'][0]:.3f} | Recall[NV]: {best_results['recall'][1]:.3f} | \n")
+    
+    if wandb!=print:
+        wandb.log({"Best Val. Acc": best_results['acc1'], "Best Val. Bacc": best_results['bacc'], "Best Val. F1-score": np.mean(best_results['f1_score'])})
+        wandb.log({"Best Val. Precision[MEL]": best_results['precision'][0], "Best Val. Precision[NV]": best_results['precision'][1]})
+        wandb.log({"Best Val. Recall[MEL]": best_results['recall'][0], "Best Val. Recall[NV]": best_results['recall'][1]})
+        wandb.log({"Training time": total_time_str})
         #wandb.finish()
     
     return

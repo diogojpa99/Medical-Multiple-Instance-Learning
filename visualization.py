@@ -135,7 +135,7 @@ def Grad_CAM(input, model, prediction, label, img):
     
     grad_activations = activations * gradients
     
-    heatmap = torch.mean(grad_activations, dim=1).squeeze()
+    heatmap = torch.sum(grad_activations, dim=1).squeeze()
     heatmap = F.relu(heatmap)
     heatmap /= torch.max(heatmap) 
 
@@ -146,7 +146,8 @@ def Grad_CAM(input, model, prediction, label, img):
 ####  Binary Visualization Functions
         
 def Visualize_Activation_Instance_Binary(model: torch.nn.Module, 
-                                        dataloader:torch.utils.data.DataLoader, 
+                                        dataloader:torch.utils.data.DataLoader,
+                                        device: torch.device, 
                                         outputdir=None, 
                                         args=None):
 
@@ -160,6 +161,8 @@ def Visualize_Activation_Instance_Binary(model: torch.nn.Module,
 
     for j, (inputs, labels, idxs, masks) in enumerate(dataloader):
         
+        inputs, labels, masks = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True), masks.to(device, non_blocking=True)
+                
         for i in range(args.visualize_num_images):
             
             input=inputs[i].unsqueeze(0)
@@ -224,13 +227,14 @@ def Visualize_Activation_Instance_Binary(model: torch.nn.Module,
         title = f"| MIL Class Activation Maps ({args.dataset}) | MIL Type: {args.mil_type} | Pooling Type: {args.pooling_type} |"
         plt.suptitle(title, fontsize=20)
         plt.subplots_adjust(wspace=0.1, hspace=0.1)
-        plt.savefig(str(outputdir) + f'/MIL-{args.mil_type}-{args.pooling_type}-{args.dataset}-Class_Activations-sBatch_{j}.jpg', dpi=300, bbox_inches='tight')  
+        plt.savefig(str(outputdir) + f'/MIL-{args.mil_type}-{args.pooling_type}-{args.dataset}-Class_Activations-zBatch_{j}.jpg', dpi=300, bbox_inches='tight')  
         
         if j == (args.vis_num-1):
             break
 
 def Visualize_Activation_Embedding_Binary(model: torch.nn.Module, 
                                         dataloader:torch.utils.data.DataLoader, 
+                                        device: torch.device,
                                         outputdir=None, 
                                         args=None):
 
@@ -243,9 +247,11 @@ def Visualize_Activation_Embedding_Binary(model: torch.nn.Module,
     ])
 
     for j, (inputs, labels, idxs, masks) in enumerate(dataloader):
+
+        inputs, labels, masks = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True), masks.to(device, non_blocking=True)
         
         for i in range(args.visualize_num_images):
-            
+                        
             input=inputs[i].unsqueeze(0)
             mask=masks[i].unsqueeze(0)
             image=reverse_transform(inputs[i])
@@ -279,12 +285,11 @@ def Visualize_Activation_Embedding_Binary(model: torch.nn.Module,
             axs[2, i].imshow(grad_cam_nv)
             axs[2, i].set_title("Grad-CAM [NV]")
             axs[2, i].axis('off');
-        
            
         title = f"| MIL Class Activation Maps ({args.dataset}) | MIL Type: {args.mil_type} | Pooling Type: {args.pooling_type} |"
         plt.suptitle(title, fontsize=20)
         plt.subplots_adjust(wspace=0.1, hspace=0.1)
-        plt.savefig(str(outputdir) + f'/MIL-{args.mil_type}-{args.pooling_type}-{args.dataset}-Class_Activations-sBatch_{j}.jpg', dpi=300, bbox_inches='tight')  
+        plt.savefig(str(outputdir) + f'/MIL-{args.mil_type}-{args.pooling_type}-{args.dataset}-Class_Activations-zBatch_{j}.jpg', dpi=300, bbox_inches='tight')  
         
         if j == (args.vis_num-1):
             break

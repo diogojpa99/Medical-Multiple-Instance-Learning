@@ -2,7 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from Feature_Extractors import EViT as evit
+
 __all__ = ['InstanceMIL', 'EmbeddingMIL']  
+cnns_backbones = ['resnet18.tv_in1k', 'resnet50.tv_in1k', 'vgg16.tv_in1k', 'densenet169.tv_in1k', 'efficientnet_b3']
+vits_backbones = ['deit_small_patch16_224', 'deit_base_patch16_224', 'deit_small_patch16_shrink_base']
 
 class MlpCLassifier(nn.Module):
     
@@ -40,7 +44,7 @@ class MIL(nn.Module):
                 args=None) -> None:
     
         super().__init__()
-        self.N = N     
+        self.num_patches = N 
         self.num_classes = num_classes   
         self.embedding_size = embedding_size
         self.pooling_type = pooling_type.lower()
@@ -50,7 +54,9 @@ class MIL(nn.Module):
         self.is_training = is_training
         self.patch_extractor_model = patch_extractor_model
         self.patch_extractor = patch_extractor  
-        self.deep_classifier = MlpCLassifier(in_features=embedding_size, out_features=num_classes, dropout=dropout)    
+        self.deep_classifier = MlpCLassifier(in_features=embedding_size, out_features=num_classes, dropout=dropout)   
+        self.evit_attn_tokens_idx = None 
+        self.evit_inattn_tokens_idx = None
     
     def activations_hook(self, grad):
         self.gradients = grad
@@ -60,6 +66,19 @@ class MIL(nn.Module):
 
     def get_activations(self, x):
         return self.patch_extractor(x)
+    
+    def save_evit_tokens_idx(self, attn_tokens_idx, inattn_tokens_idx):
+        self.evit_attn_tokens_idx = attn_tokens_idx
+        self.evit_inattn_tokens_idx = inattn_tokens_idx
+        
+    def get_evit_tokens_idx(self):
+        """ This function returns the indexes of the attentive and innatentive tokens of the EViT model.
+            But not the real ones. If you want to get the real indexes, you have to use a function from the EViT implementation.
+
+        Returns:
+            Tuple of lists: Tuple of lists with the indexes of the attentive and innatentive tokens of the EViT model.
+        """
+        return self.evit_attn_tokens_idx, self.evit_inattn_tokens_idx
 
     def MaxPooling(self, representation):
         
@@ -238,6 +257,52 @@ class MIL(nn.Module):
         
         return x
     
+    def foward_features_cnns(self, x):
+        """Foward features when the backbone for the MIL model is a CNN based model, such as ResNet, VGG, DenseNet, etc.
+        Args:
+            x (torch.Tensor): Input image. Shape (Batch_size, 3, 224, 224).
+        Returns:
+            torch.Tensor: Returns the features with shape (Batch_size, N, embedding_size).
+        """
+        x = self.patch_extractor(x) # (1) Extract features from the Images: (Batch_size, 3, 224, 224) -> (Batch_size, embedding_size, 14, 14)
+
+        # Register Hook to have access to the gradients
+        if not self.is_training:
+            if x.requires_grad == True:
+                x.register_hook(self.activations_hook)
+
+        # (2) Transform input: (Batch_size, embedding_size, 14, 14) -> (Batch_size, N, embedding_size)
+        x = x.permute(0, 2, 3, 1)
+        x = torch.flatten(x, start_dim=1, end_dim=2) # x = x.view(x.size(0), x.size(1)*x.size(2), x.size(3))
+        
+        return x
+    
+    def foward_features_vits(self, x):
+        """ Foward features when the backbone for the MIL model is a Transformer based model.
+            The 'attn_tokens_idx' contains the indexes of the attentive tokens of the EViT model.
+        Args:
+            x (torch.Tensor): Input image. Shape (Batch_size, 3, 224, 224).
+        Returns:
+            (torch.Tensor): Returns the features with shape (Batch_size, N, embedding_size).
+        """
+        attn_tokens_idx = None
+        if self.patch_extractor_model=='deit_small_patch16_shrink_base':
+            x, attn_tokens_idx = self.patch_extractor(x, keep_rate=self.args.base_keep_rate, get_idx=True)
+        else:
+            x = self.patch_extractor(x)
+            
+        if not self.args.cls_token:
+            x = x[:,1:,:] # remove cls token
+            
+        if self.args.fuse_token and self.patch_extractor_model=='deit_small_patch16_shrink_base':
+            fuse_token = x[:,-1,:]
+            x = x[:,:-1,:]
+            x, inattn_tokens_idx=EViT_Full_Fused_Attn_Map(x, fuse_token, attn_tokens_idx, 196, self.embedding_size, x.size(0))
+
+        self.save_evit_tokens_idx(attn_tokens_idx, inattn_tokens_idx)
+        self.num_patches = x.size(1) 
+        
+        return x
 
 class EmbeddingMIL(MIL):
     
@@ -255,33 +320,16 @@ class EmbeddingMIL(MIL):
             Where N = 14*14 = 196 (If we consider 16x16 patches)
         '''
         
-        # (1) Extract features from the Images: (Batch_size, 3, 224, 224) -> (Batch_size, embedding_size, 14, 14)
-        x = self.patch_extractor(x)
-        
-        if self.patch_extractor_model == "deit_small_patch16_224" or self.patch_extractor_model == "deit_base_patch16_224":
-            """ DEiT models return a tensor with shape (batch_size, embedding_size, N)
-            We need to reshape it to (batch_size, embedding_size, 14, 14) in order to then use grad-cam """
-            batch_size = x.size(0)
-            x = x[:,1:,:] # Remove the CLS token of the patch sequence
-            x = x.permute(0, 2, 1)
-            x = x.reshape(batch_size, self.embedding_size, 14, 14)
-
-        # Register Hook
-        if not self.is_training:
-            if x.requires_grad == True:
-                x.register_hook(self.activations_hook)
-
-        # (2) Transform input: (Batch_size, embedding_size, 14, 14) -> (Batch_size, N, embedding_size)
-        x = x.permute(0, 2, 3, 1)
-        x = torch.flatten(x, start_dim=1, end_dim=2) # x = x.view(x.size(0), x.size(1)*x.size(2), x.size(3))
-        
-        # (3) Apply pooling to obtain the bag representation: (Batch_size, N, embedding_size) -> (Batch_size, embedding_size)
+        # (1) Foward Features
+        x = self.foward_features_cnns(x) if self.patch_extractor_model in cnns_backbones else self.foward_features_vits(x)
+                    
+        # (2) Apply pooling to obtain the bag representation: (Batch_size, N, embedding_size) -> (Batch_size, embedding_size)
         x = self.MilPooling(x, mask)
         
-        # (4) Apply a Mlp to obtain the bag label: (Batch_size, embedding_size) -> (Batch_size, num_classes)
+        # (3) Apply a Mlp to obtain the bag label: (Batch_size, embedding_size) -> (Batch_size, num_classes)
         x = self.deep_classifier(x)
         
-        # (5) Apply log to softmax values -> Using NLLLoss criterion
+        # (4) Apply log to softmax values -> Using NLLLoss criterion
         x = self.LogSoftmax(x)
 
         return x #(Batch_size, num_classes)
@@ -316,46 +364,23 @@ class InstanceMIL(MIL):
             Where N = 14*14 = 196 (If we consider 16x16 patches)
         '''
         
-        # (1) Extract features from the Images: (Batch_size, 3, 224, 224) -> (Batch_size, embedding_size, 14, 14)
-        x = self.patch_extractor(x)
-        
-        if self.patch_extractor_model == "deit_small_patch16_224" or self.patch_extractor_model == "deit_base_patch16_224":
-            """ DEiT models return a tensor with shape (Batch_size, embedding_size, N)
-            We need to reshape it to (Batch_size, embedding_size, 14, 14) in order to then use grad-cam """
-            batch_size = x.size(0)
-            x = x[:,1:,:] # Remove the CLS token of the patch sequence
-            x = x.permute(0, 2, 1)
-            x = x.reshape(batch_size, self.embedding_size, 14, 14)
-        
-        # Register Hook to have access to the gradients
-        if not self.is_training:
-            if x.requires_grad == True:
-                x.register_hook(self.activations_hook)
-        
-        # (2) Transform input: (Batch_size, embedding_size, 14, 14) -> (Batch_size, N, embedding_size) -> (Batch_size*N, embedding_size)
-        x = x.permute(0, 2, 3, 1)
-        x = torch.flatten(x, start_dim=1, end_dim=2) #x = x.view(x.size(0), x.size(1)*x.size(2), x.size(3))
-        x = x.reshape(-1, x.size(2)) 
+        # (1) Foward Features: (Batch_size, 3, 224, 224) -> (Batch_size, N, embedding_size)
+        x = self.foward_features_cnns(x) if self.patch_extractor_model in cnns_backbones else self.foward_features_vits(x)
+        x = x.reshape(-1, x.size(2)) # Transform input: (Batch_size*N, embedding_size)
 
-        # (4) Use a deep classifier to obtain the score for each instance: (Batch_size*N, embedding_size) -> (Batch_size*N, num_classes)
-        x = self.deep_classifier(x)
+        # (2) Use a deep classifier to obtain the score for each instance: (Batch_size*N, embedding_size) -> (Batch_size*N, num_classes)
+        x = self.deep_classifier(x) 
+        x = x.view(-1, self.num_patches, self.num_classes) # Transform x to: (Batch_size, N, num_classes)
         
-        # (5) Transform x: (Batch_size*N, num_classes) -> (Batch_size, N, num_classes)
-        x = x.view(-1, self.N, self.num_classes) # x = x.reshape(self.args.batch_size, self.N, self.num_classes) 
-        
-        # (6) Apply softmax to the scores
-        x = self.Softmax(x)
-        
-        # Save the softmax probs for each patch
-        self.save_patch_probs(x)
-        
-        # (7) Apply pooling to obtain the bag representation: (Batch_size, N, num_classes) -> (Batch_size, num_classes)
+        # (3) Apply softmax to the scores
+        x = self.Softmax(x) 
+        self.save_patch_probs(x) # Save the softmax probs for each patch
+
+        # (4) Apply pooling to obtain the bag representation: (Batch_size, N, num_classes) -> (Batch_size, num_classes)
         x = self.MilPooling(x, mask)
-
-        # Save the softmax probabilities of the bag
-        self.save_softmax_bag_probs(x)
+        self.save_softmax_bag_probs(x) # Save the softmax probabilities of the bag
         
-        # (8) Apply log to softmax values 
+        # (5) Apply log to softmax values 
         x = torch.log(x)
     
         return x #(Batch_size, num_classes)
@@ -393,7 +418,10 @@ def Pretrained_Feature_Extractures(feature_extractor, args) -> str:
                    'https://dl.fbaipublicfiles.com/deit/deit_base_patch16_224-b5f2ef4d.pth',
                    'https://download.pytorch.org/models/vgg16-397923af.pth',
                    'https://download.pytorch.org/models/densenet169-b2777c0a.pth',
-                   'https://github.com/rwightman/pytorch-image-models/releases/download/v0.1-weights/efficientnet_b3_ra2-cf984f9c.pth']
+                   'https://github.com/rwightman/pytorch-image-models/releases/download/v0.1-weights/efficientnet_b3_ra2-cf984f9c.pth',
+                   'Feature_Extractors/Pretrained_EViTs/evit-0.7-img224-deit-s.pth',
+                   'Feature_Extractors/Pretrained_EViTs/evit-0.7-fuse-img224-deit-s.pth'
+                   ]
     
     if feature_extractor == "resnet18.tv_in1k":
         return checkpoints[0]
@@ -409,8 +437,42 @@ def Pretrained_Feature_Extractures(feature_extractor, args) -> str:
         return checkpoints[5]
     elif feature_extractor == "efficientnet_b3":
         return checkpoints[6]
+    elif feature_extractor == "deit_small_patch16_shrink_base":
+        if args.base_keep_rate == 0.7:
+            return checkpoints[7] if not args.fuse_token else checkpoints[8]
+        else:
+            raise ValueError(f"At the moment, we are only using the pretrained weights for EViT with base_keep_rate = 0.7.\n \
+                Please, set base_keep_rate = 0.7 in the parser.\n Other pretrained weights will be added soon.")
     else:
         raise ValueError(f"Invalid feature_extractor: {feature_extractor}. Must be 'resnet18.tv_in1k',\
-            'resnet50.tv_in1k', 'deit_small_patch16_224', 'deit_base_patch16_224', 'vgg16.tv_in1k' or 'efficientnet'.")
+            'resnet50.tv_in1k', 'deit_small_patch16_224', 'deit_base_patch16_224', 'vgg16.tv_in1k', 'efficientnet' or 'deit_small_patch16_shrink_base'")
         
-    
+def EViT_Full_Fused_Attn_Map(x:torch.Tensor=None, 
+                            fuse_token:torch.Tensor=None,
+                            idxs:list=None, 
+                            N:int=196, 
+                            D:int=384,
+                            Batch_size:int=1) -> torch.Tensor:
+    """ This functions transforms the output of EViT into a full map of the embeddings. The full map wil have a shape of (Batch_size, N, D).
+        Where the innatentive tokens are filled with the fused token.
+        
+    Args:
+        x (torch.Tensor): EViT's output. Shape(Batch_Size, num_left_tokens, D). Defaults to None.
+        fuse_token (torch.Tensor): One of the fused tokens. Shape(Batch_size,D). Defaults to None.
+        idxs (list): List of the idxs "removal layer" of the attentive tokens in EViT. Defaults to None.
+        N (int): Original number of patches for a 224x224 image and 16x16 patches. Defaults to 196.
+        D (int): Dimension of the embeddings. Defaults to 384.
+        Batch_size (int): Batch_size. Defaults to 1.
+
+    Returns:
+        torch.Tensor: Full map of the embeddings. Shape(Batch_size, N, D). Where the innatentive tokens are filled with the fused token.
+    """
+
+    full_map = torch.zeros((Batch_size, N, D)).to(x.device) 
+    indexes = idxs[-1].unsqueeze(-1).expand(-1, -1, D).clone()
+    compl_idx = evit.complement_idx(idxs[-1], N)
+
+    full_map.scatter_(1, index=indexes, src=x)
+    full_map.scatter_(1, index=compl_idx.unsqueeze(-1).expand(-1, -1, D), src=fuse_token.unsqueeze(1).repeat(1, compl_idx.size(1), 1))
+
+    return full_map, compl_idx
