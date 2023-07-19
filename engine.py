@@ -8,6 +8,7 @@ from typing import Optional
 from collections import Counter
 
 import numpy as np
+import sklearn
 from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score, \
     balanced_accuracy_score
       
@@ -109,6 +110,7 @@ def evaluation(model: torch.nn.Module,
     targs = []
     test_loss, test_acc = 0, 0
     results = {}
+    deit_count_cls_token=0
     
     for input, target, input_idxs, mask in dataloader:
         
@@ -124,9 +126,11 @@ def evaluation(model: torch.nn.Module,
         test_acc += ((predictions == target).sum().item()/len(predictions))
         
         preds.append(predictions.cpu().numpy()); targs.append(target.cpu().numpy())
+        deit_count_cls_token += (model.deit_count_cls_token_select/len(predictions))
 
     # Adjust metrics to get average loss and accuracy per batch 
     test_loss = test_loss/len(dataloader); test_acc = test_acc/len(dataloader)
+    deit_count_cls_token = deit_count_cls_token/len(dataloader)
 
     if wandb!=print:
         wandb.log({"Val Loss":test_loss},step=epoch)
@@ -138,6 +142,7 @@ def evaluation(model: torch.nn.Module,
     results['precision'], results['recall'] = precision_score(targs, preds, average=None), recall_score(targs, preds, average=None)
     results['bacc'] = balanced_accuracy_score(targs, preds)
     results['acc1'], results['loss'] = test_acc, test_loss
+    results['deit_count_cls_token'] = deit_count_cls_token
 
     return results
 
@@ -230,29 +235,22 @@ def Class_Weighting(train_set, val_set, device, args):
     Returns:
         torch.Tensor: Class weights. (shape: (2,))
     """
-    
     train_dist = dict(Counter(train_set.targets))
     val_dist = dict(Counter(val_set.targets))
     
-    train_dist['MEL'] = train_dist.pop(0)
-    train_dist['NV'] = train_dist.pop(1)
-    val_dist['MEL'] = val_dist.pop(0)
-    val_dist['NV'] = val_dist.pop(1)
+    train_dist = dict(sorted(train_dist.items(), key=lambda x: x[0]))
+    val_dist = dict(sorted(val_dist.items(), key=lambda x: x[0]))
     
-    n_train_samples = len(train_set)
-    
-    #print(f"Classes: {train_set.classes}\n")
     print(f"Classes map: {train_set.class_to_idx}")
     print(f"Train distribution: {train_dist}")
     print(f"Val distribution: {val_dist}")
     
     if args.class_weights:
         if args.class_weights_type == 'Median':
-            class_weight = torch.Tensor([n_train_samples/train_dist['MEL'], 
-                                         n_train_samples/ train_dist['NV']]).to(device)
+            class_weight = torch.Tensor([(len(train_set)/x) for x in train_dist.values()]).to(device)
         elif args.class_weights_type == 'Manual':                   
-            class_weight = torch.Tensor([n_train_samples/(2*train_dist['MEL']), 
-                                         n_train_samples/(2*train_dist['NV'])]).to(device)
+            #class_weight = torch.Tensor([(len(train_set)/(args.nb_classes*x)) for x in train_dist.values()]).to(device)
+            class_weight= torch.Tensor(sklearn.utils.class_weight.compute_class_weight(class_weight='balanced', classes=np.unique(train_set.targets), y=train_set.targets)).to(device)
     else: 
         class_weight = None
     

@@ -24,6 +24,9 @@ import wandb
 
 from typing import List, Union
 
+import os
+os.environ["WANDB_MODE"] = "offline"
+
 def get_args_parser():
    
     parser = argparse.ArgumentParser('MIL - Version 2', add_help=False)
@@ -225,6 +228,7 @@ def main(args):
     if args.wandb_flag:
         wandb.init(
             project=args.project_name,
+            mode="offline",
             config={
             "Feature Extractor model": args.feature_extractor,
             "Feature Extractor dataset": args.feature_extractor_pretrained_dataset,
@@ -244,12 +248,11 @@ def main(args):
             }
         )
         wandb.run.name = args.run_name
-          
+        
     """ if args.debug:
         wandb=print """
     
-    # Print arguments
-    if args.training:
+    if args.training: # Print arguments
         print("----------------- Args -------------------")
         for arg in vars(args):
             print(f"{arg}: {getattr(args, arg)}")
@@ -469,6 +472,11 @@ def main(args):
                                              epoch=0, 
                                              device=device,
                                              args=args)
+            
+            if args.feature_extractor in mil.deits_backbones and args.cls_token:
+                print(f"[INFO] CLS token was selected {(best_results['deit_count_cls_token']*100):.2f}% of the times.")             
+            elif args.feature_extractor in mil.evits_backbones and args.fuse_token:
+                print(f"[INFO] Fused tokens were selected {best_results['evit_count_fused_tokens'][0]} times ({best_results['evit_count_fused_tokens'][1]}).")
 
     elif args.training or args.finetune:
         
@@ -526,7 +534,7 @@ def main(args):
             
             print(f"Epoch: {epoch+1} | lr: {train_stats['train_lr']:.5f} | Train Loss: {train_stats['train_loss']:.4f} | Train Acc: {train_stats['train_acc']:.4f} |",
                   f"Val. Loss: {results['loss']:.4f} | Val. Acc: {results['acc1']:.4f} | Val. Bacc: {results['bacc']:.4f} | F1-score: {np.mean(results['f1_score']):.4f}")
-            
+                            
             if results['bacc'] > best_val_bacc and early_stopping.counter < args.counter_saver_threshold:
                 # Only want to save the best checkpoints if the best val bacc and the early stopping counter is less than the threshold
                 best_val_bacc = results['bacc']
@@ -553,7 +561,7 @@ def main(args):
                 break
             
             if epoch < 1 and args.mil_type == 'instance':
-                print(f"[INFO] Number of patches used: {model.num_patches}" )
+                print(f"\t[INFO] Number of patches used: {model.num_patches}" )
             
         # Compute the total training time
         total_time = time.time() - start_time
@@ -567,17 +575,16 @@ def main(args):
         
         utils.plot_loss_and_acc_curves(train_results, val_results, output_dir=output_dir, args=args)
 
-    utils.plot_confusion_matrix(best_results["confusion_matrix"], {'MEL': 0, 'NV': 1}, output_dir=output_dir, args=args)
+    utils.plot_confusion_matrix(best_results["confusion_matrix"], train_set.class_to_idx, output_dir=output_dir, args=args)
             
     print('\n---------------- Val. stats for the best model ----------------\n',
         f"Acc: {best_results['acc1']:.3f} | Bacc: {best_results['bacc']:.3f} | F1-score: {np.mean(best_results['f1_score']):.3f} | \n",
-        f"Precision[MEL]: {best_results['precision'][0]:.3f} | Precision[NV]: {best_results['precision'][1]:.3f} | \n",
-        f"Recall[MEL]: {best_results['recall'][0]:.3f} | Recall[NV]: {best_results['recall'][1]:.3f} | \n")
+        f"Class-to-idx: {train_set.class_to_idx} | \n",
+        f"Precisions: {best_results['precision']} | \n",
+        f"Recalls: {best_results['recall']} | \n")
     
     if wandb!=print:
         wandb.log({"Best Val. Acc": best_results['acc1'], "Best Val. Bacc": best_results['bacc'], "Best Val. F1-score": np.mean(best_results['f1_score'])})
-        wandb.log({"Best Val. Precision[MEL]": best_results['precision'][0], "Best Val. Precision[NV]": best_results['precision'][1]})
-        wandb.log({"Best Val. Recall[MEL]": best_results['recall'][0], "Best Val. Recall[NV]": best_results['recall'][1]})
         wandb.log({"Training time": total_time_str})
         #wandb.finish()
     

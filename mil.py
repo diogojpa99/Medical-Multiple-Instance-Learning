@@ -7,6 +7,8 @@ from Feature_Extractors import EViT as evit
 __all__ = ['InstanceMIL', 'EmbeddingMIL']  
 cnns_backbones = ['resnet18.tv_in1k', 'resnet50.tv_in1k', 'vgg16.tv_in1k', 'densenet169.tv_in1k', 'efficientnet_b3']
 vits_backbones = ['deit_small_patch16_224', 'deit_base_patch16_224', 'deit_small_patch16_shrink_base']
+deits_backbones = ['deit_small_patch16_224', 'deit_base_patch16_224']
+evits_backbones = ['deit_small_patch16_shrink_base']
 
 class MlpCLassifier(nn.Module):
     
@@ -57,6 +59,7 @@ class MIL(nn.Module):
         self.deep_classifier = MlpCLassifier(in_features=embedding_size, out_features=num_classes, dropout=dropout)   
         self.evit_attn_tokens_idx = None 
         self.evit_inattn_tokens_idx = None
+        self.deit_count_cls_token_select = 0
     
     def activations_hook(self, grad):
         self.gradients = grad
@@ -93,15 +96,27 @@ class MIL(nn.Module):
             return pooled_feature
         
         elif self.mil_type == "instance":
-            """ Classical MIL: The representation of a given bag is given by the maximum probability
-            of 'MEL' case. If the probability of 'MEL' is higher than the probability .5 then the bag is classified as 'MEL'. 
+            """ Classical MIL: The representation of a given bag is given by the maximum probability of 'MEL' case. 
+            If the probability of 'MEL' is higher than the probability .5 then the bag is classified as 'MEL'. 
+            
+            Multiclass MIL: The representation of a given bag is given by the maximum probability of the most probable class.
+            
             Args:
                 representation (torch.Tensor): probs of each instance in the bag. Shape (Batch_size, N, num_classes).
             Returns:
                 torch.Tensor: Pooled probs. Shape (Batch_size, num_classes). 
             """
-            pooled_probs,_ = torch.max(representation[:,:,0], dim=1) # Get the maximum probability of the melanoma class (MEL:0) per bag.
-            pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1) # Concatenate the pooled probabilities with the pooled NV probabilities -> In order to use the same NLLLoss function.
+            if self.num_classes == 2:
+                representation = torch.softmax(representation, dim=2)
+                pooled_probs, pooled_idxs = torch.max(representation[:,:,0], dim=1) # Get the maximum probability of the melanoma class (MEL:0) per bag.
+                pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1) # Concatenate the pooled probabilities with the pooled NV probabilities -> In order to use the same NLLLoss function.
+            else:
+                pooled_scores, pooled_idxs = torch.max(representation, dim=1) # Get the maximum probability of the most probable class per bag.
+                pooled_probs = torch.softmax(pooled_scores, dim=1)
+            
+            if self.patch_extractor_model in deits_backbones:
+                self.deit_count_cls_token_select += torch.sum(pooled_idxs==0).item()  # Count the number of times the cls token is selected as the most probable patch.
+            
             return pooled_probs     
     
     def AvgPooling(self, representation):
@@ -124,6 +139,7 @@ class MIL(nn.Module):
             Returns:
                 torch.Tensor: Pooled probs. Shape (Batch_size, num_classes). 
             """
+            representation = torch.softmax(representation, dim=2)
             pooled_probs = torch.mean(representation, dim=1)
             return pooled_probs
     
@@ -149,9 +165,19 @@ class MIL(nn.Module):
             Returns:
                 torch.Tensor: Pooled probs. Shape (Batch_size, num_classes). 
             """
-            pooled_probs,_ = torch.topk(representation[:,:,0], k=topk, dim=1) # Get the maximum probability of the melanoma class (MEL:0) for the top k instances (per bag).
-            pooled_probs = torch.mean(pooled_probs, dim=1)
-            pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1) 
+            if self.num_classes == 2:
+                representation = torch.softmax(representation, dim=2)
+                pooled_probs, pooled_idxs = torch.topk(representation[:,:,0], k=topk, dim=1) # Get the maximum probability of the melanoma class (MEL:0) for the top k instances (per bag).
+                pooled_probs = torch.mean(pooled_probs, dim=1)
+                pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1)
+            else:
+                pooled_scores, pooled_idxs = torch.topk(representation, k=topk, dim=1)
+                pooled_probs = torch.softmax(pooled_scores, dim=2)
+                pooled_probs = torch.mean(pooled_probs, dim=1)
+                        
+            if self.patch_extractor_model in deits_backbones:
+                self.deit_count_cls_token_select += (torch.sum(pooled_idxs==0).item()/topk) # Count the number of times the cls token is selected as the most probable patch.
+             
             return pooled_probs
         
     def MaskMaxPooling(self, representation, mask):
@@ -186,13 +212,17 @@ class MIL(nn.Module):
             Returns:
                 torch.Tensor: Pooled probs. Shape (Batch_size, num_classes). 
             """
-            masked_probs = representation[:,:,0] * pooled_mask # Apply mask to the probabilities of the melanoma class (MEL:0) 
-            
-            # Compute masked mean for each bag
-            pooled_probs,_ = torch.max(masked_probs, dim=1)
-            pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1)
-            pooled_probs = pooled_probs.to(self.device)
-            
+            if self.num_classes == 2:
+                representation = torch.softmax(representation, dim=2)
+                masked_probs = representation[:,:,0] * pooled_mask # Apply mask to the probabilities of the melanoma class (MEL:0)                 
+                pooled_probs,_ = torch.max(masked_probs, dim=1)
+                pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1)
+                pooled_probs = pooled_probs.to(self.device)
+            else:
+                pooled_mask = pooled_mask.unsqueeze(-1).expand(-1, -1, self.num_classes) # Transform mask into shape (Batch_size, N, num_classes)
+                masked_probs = representation * pooled_mask # Shape (Batch_size, N, num_classes)
+                raise ValueError(f"At the moment, we are only using the MaskMaxPooling for the binary case.\n")
+               
             return pooled_probs
     
     def MaskAvgPooling(self, representation, mask):
@@ -228,19 +258,36 @@ class MIL(nn.Module):
             Returns:
                 torch.Tensor: Pooled probs. Shape (Batch_size, num_classes). 
             """
-            masked_probs = representation[:,:,0] * pooled_mask # Apply mask to the probabilities of the melanoma class (MEL:0) 
+            if self.num_classes == 2:
+                representation = torch.softmax(representation, dim=2)
+                masked_probs = representation[:,:,0] * pooled_mask # Apply mask to the probabilities of the melanoma class (MEL:0) 
 
-            # Compute masked mean for each bag
-            pooled_probs = torch.zeros(len(masked_probs)).to(self.device) # shape (Batch_size)
-            for i in range(len(masked_probs)):
-                pooled_probs[i] = torch.sum(masked_probs[i])/len(torch.nonzero(masked_probs[i]))   
-            
-            pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1)
-            pooled_probs = pooled_probs.to(self.device)
+                # Compute masked mean for each bag
+                pooled_probs = torch.zeros(len(masked_probs)).to(self.device) # shape (Batch_size)
+                for i in range(len(masked_probs)):
+                    pooled_probs[i] = torch.sum(masked_probs[i])/len(torch.nonzero(masked_probs[i]))   
+                
+                pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1)
+                pooled_probs = pooled_probs.to(self.device)
+            else:
+                raise ValueError(f"At the moment, we are only using the MaskAvgPooling for the binary case.\n")
             
             return pooled_probs
         
-    def MilPooling(self, x, mask=None):
+    def MilPooling(self, x:torch.Tensor, mask:torch.Tensor=None) -> torch.Tensor:
+        """ This function applies the MIL-Pooling to the input representation.
+            Note that the shape of the input representation depends on the Mil-type.
+            Note that the formulation of the "MIL-Problem" is different when we are in the Multiclass case.
+        Args:
+            x (torch.Tensor): Input representation. The shape of this tensor depends on the Mil-type.
+                                If Mil-type is 'embedding', the shape is (Batch_size, N, embedding_size).
+                                If Mil-type is 'instance', the shape is (Batch_size, N, num_classes).
+            mask (torch.Tensor): Binary Masks. Shape: (Batch_size, 1, 224, 224). Defaults to None.
+        Raises:
+            ValueError: If pooling type is not 'max', 'avg', 'topk', 'mask_avg' or 'mask_max'. Raises ValueError.
+        Returns:
+            torch.Tensor: Pooled representation. Shape (Batch_size, embedding_size) or (Batch_size, num_classes).
+        """
         
         if self.pooling_type == "max":
             x = self.MaxPooling(x)
@@ -285,8 +332,9 @@ class MIL(nn.Module):
         Returns:
             (torch.Tensor): Returns the features with shape (Batch_size, N, embedding_size).
         """
-        attn_tokens_idx = None
-        if self.patch_extractor_model=='deit_small_patch16_shrink_base':
+        attn_tokens_idx, inattn_tokens_idx = None, None
+        
+        if self.patch_extractor_model in evits_backbones:
             x, attn_tokens_idx = self.patch_extractor(x, keep_rate=self.args.base_keep_rate, get_idx=True)
         else:
             x = self.patch_extractor(x)
@@ -294,7 +342,7 @@ class MIL(nn.Module):
         if not self.args.cls_token:
             x = x[:,1:,:] # remove cls token
             
-        if self.args.fuse_token and self.patch_extractor_model=='deit_small_patch16_shrink_base':
+        if self.args.fuse_token and self.patch_extractor_model in evits_backbones:
             fuse_token = x[:,-1,:]
             x = x[:,:-1,:]
             x, inattn_tokens_idx=EViT_Full_Fused_Attn_Map(x, fuse_token, attn_tokens_idx, 196, self.embedding_size, x.size(0))
@@ -333,7 +381,7 @@ class EmbeddingMIL(MIL):
         x = self.LogSoftmax(x)
 
         return x #(Batch_size, num_classes)
-    
+
 class InstanceMIL(MIL):
     
     def __init__(self, mil_type: str = "instance", *args, **kwargs) -> None:
@@ -342,7 +390,6 @@ class InstanceMIL(MIL):
         self.mil_type = mil_type.lower()
         self.softmax_probs = None
         self.patch_probs = None
-        self.Softmax = nn.Softmax(dim=2)
 
     def save_patch_probs(self, x):
         self.patch_probs = x
@@ -372,15 +419,13 @@ class InstanceMIL(MIL):
         x = self.deep_classifier(x) 
         x = x.view(-1, self.num_patches, self.num_classes) # Transform x to: (Batch_size, N, num_classes)
         
-        # (3) Apply softmax to the scores
-        x = self.Softmax(x) 
-        self.save_patch_probs(x) # Save the softmax probs for each patch
-
-        # (4) Apply pooling to obtain the bag representation: (Batch_size, N, num_classes) -> (Batch_size, num_classes)
+        self.save_patch_probs(torch.softmax(x, dim=2)) # Save the softmax probabilities of the patches (instances)
+        
+        # (3) Apply pooling to obtain the bag representation: (Batch_size, N, num_classes) -> (Batch_size, num_classes)
         x = self.MilPooling(x, mask)
         self.save_softmax_bag_probs(x) # Save the softmax probabilities of the bag
         
-        # (5) Apply log to softmax values 
+        # (4) Apply log to softmax values 
         x = torch.log(x)
     
         return x #(Batch_size, num_classes)

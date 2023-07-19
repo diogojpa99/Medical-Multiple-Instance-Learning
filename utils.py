@@ -14,6 +14,8 @@ import torch.distributed as dist
 from torchinfo import summary
 import torch.nn.functional as F
 
+import mil
+
 import Feature_Extractors.DenseNet as densenet
 
 def Plot_TrainSet(trainset, args):
@@ -155,7 +157,7 @@ def Load_Pretrained_FeatureExtractor(path, model, args):
     state_dict = model.state_dict()
 
     # Compare the keys of the checkpoint and the model
-    if args.feature_extractor == 'deit_small_patch16_224' or args.feature_extractor == 'deit_base_patch16_224'or args.feature_extractor == 'deit_small_patch16_shrink_base':
+    if args.feature_extractor in mil.vits_backbones:
         checkpoint = checkpoint['model']
         Load_Pretrained_ViT_Interpolate_Pos_Embed(model, checkpoint)
         
@@ -270,9 +272,8 @@ def Load_Pretrained_MIL_Model(path, model, args):
             args.resume, map_location='cpu', check_hash=True)
     else:
         checkpoint = torch.load(args.resume, map_location='cpu')
-        
-    checkpoint_keys = set(checkpoint['model'].keys())
-    model_keys = set(model.state_dict().keys())
+                
+    checkpoint_keys = set(checkpoint['model'].keys()); model_keys = set(model.state_dict().keys())
     unmatched_keys = checkpoint_keys.symmetric_difference(model_keys)
     for k in unmatched_keys:
         print(f"Removing key {k} from pretrained checkpoint")
