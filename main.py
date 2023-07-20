@@ -25,7 +25,7 @@ import wandb
 from typing import List, Union
 
 import os
-os.environ["WANDB_MODE"] = "offline"
+#os.environ["WANDB_MODE"] = "offline"
 
 def get_args_parser():
    
@@ -228,7 +228,7 @@ def main(args):
     if args.wandb_flag:
         wandb.init(
             project=args.project_name,
-            mode="offline",
+            #mode="offline",
             config={
             "Feature Extractor model": args.feature_extractor,
             "Feature Extractor dataset": args.feature_extractor_pretrained_dataset,
@@ -466,6 +466,7 @@ def main(args):
 
         elif args.evaluate:
             print('******* Starting evaluation process. *******')
+            total_time_str = 0
             best_results = engine.evaluation(model=model,
                                              dataloader=data_loader_val,
                                              criterion=torch.nn.NLLLoss(), 
@@ -474,10 +475,10 @@ def main(args):
                                              args=args)
             
             if args.feature_extractor in mil.deits_backbones and args.cls_token:
-                print(f"[INFO] CLS token was selected {(best_results['deit_count_cls_token']*100):.2f}% of the times.")             
+                print(f"[INFO] CLS token was selected {(best_results['count_tokens']*100):.2f}% of the times.")             
             elif args.feature_extractor in mil.evits_backbones and args.fuse_token:
-                print(f"[INFO] Fused tokens were selected {best_results['evit_count_fused_tokens'][0]} times ({best_results['evit_count_fused_tokens'][1]}).")
-
+                print(f"[INFO] Fused tokens were selected {(best_results['count_tokens']*100):.2f}% of the times.")
+                            
     elif args.training or args.finetune:
         
         start_time = time.time()  
@@ -566,6 +567,7 @@ def main(args):
         # Compute the total training time
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        
         print('\n---------------- Train stats for the last epoch ----------------\n',
             f"Acc: {train_stats['acc1']:.3f} | Bacc: {train_stats['bacc']:.3f} | F1-score: {np.mean(train_stats['f1_score']):.3f} | \n",
             f"Precision[MEL]: {train_stats['precision'][0]:.3f} | Precision[NV]: {train_stats['precision'][1]:.3f} | \n",
@@ -578,7 +580,7 @@ def main(args):
     utils.plot_confusion_matrix(best_results["confusion_matrix"], train_set.class_to_idx, output_dir=output_dir, args=args)
             
     print('\n---------------- Val. stats for the best model ----------------\n',
-        f"Acc: {best_results['acc1']:.3f} | Bacc: {best_results['bacc']:.3f} | F1-score: {np.mean(best_results['f1_score']):.3f} | \n",
+        f"Acc: {best_results['acc1']} | Bacc: {best_results['bacc']} | F1-score: {np.mean(best_results['f1_score'])} | \n",
         f"Class-to-idx: {train_set.class_to_idx} | \n",
         f"Precisions: {best_results['precision']} | \n",
         f"Recalls: {best_results['recall']} | \n")

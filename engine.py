@@ -9,7 +9,7 @@ from collections import Counter
 
 import numpy as np
 import sklearn
-from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score, \
+from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score, accuracy_score, \
     balanced_accuracy_score
       
 def train_step(model: torch.nn.Module, 
@@ -110,7 +110,7 @@ def evaluation(model: torch.nn.Module,
     targs = []
     test_loss, test_acc = 0, 0
     results = {}
-    deit_count_cls_token=0
+    count_tokens = 0
     
     for input, target, input_idxs, mask in dataloader:
         
@@ -126,11 +126,11 @@ def evaluation(model: torch.nn.Module,
         test_acc += ((predictions == target).sum().item()/len(predictions))
         
         preds.append(predictions.cpu().numpy()); targs.append(target.cpu().numpy())
-        deit_count_cls_token += (model.deit_count_cls_token_select/len(predictions))
+        count_tokens += (model.count_tokens/len(predictions))
 
     # Adjust metrics to get average loss and accuracy per batch 
     test_loss = test_loss/len(dataloader); test_acc = test_acc/len(dataloader)
-    deit_count_cls_token = deit_count_cls_token/len(dataloader)
+    count_tokens = count_tokens/len(dataloader)
 
     if wandb!=print:
         wandb.log({"Val Loss":test_loss},step=epoch)
@@ -141,8 +141,8 @@ def evaluation(model: torch.nn.Module,
     results['confusion_matrix'], results['f1_score'] = confusion_matrix(targs, preds), f1_score(targs, preds, average=None) 
     results['precision'], results['recall'] = precision_score(targs, preds, average=None), recall_score(targs, preds, average=None)
     results['bacc'] = balanced_accuracy_score(targs, preds)
-    results['acc1'], results['loss'] = test_acc, test_loss
-    results['deit_count_cls_token'] = deit_count_cls_token
+    results['acc1'], results['loss'] = accuracy_score(targs, preds), test_loss
+    results['count_tokens'] = count_tokens
 
     return results
 

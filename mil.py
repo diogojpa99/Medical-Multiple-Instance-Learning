@@ -59,7 +59,7 @@ class MIL(nn.Module):
         self.deep_classifier = MlpCLassifier(in_features=embedding_size, out_features=num_classes, dropout=dropout)   
         self.evit_attn_tokens_idx = None 
         self.evit_inattn_tokens_idx = None
-        self.deit_count_cls_token_select = 0
+        self.count_tokens = 0
     
     def activations_hook(self, grad):
         self.gradients = grad
@@ -112,11 +112,16 @@ class MIL(nn.Module):
                 pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1) # Concatenate the pooled probabilities with the pooled NV probabilities -> In order to use the same NLLLoss function.
             else:
                 pooled_scores, pooled_idxs = torch.max(representation, dim=1) # Get the maximum probability of the most probable class per bag.
-                pooled_probs = torch.softmax(pooled_scores, dim=1)
+                pooled_probs=torch.softmax(pooled_scores, dim=1)
             
+            # Count the number of times the cls_token or the fuse_tokens are selected as the most probable patch.            
             if self.patch_extractor_model in deits_backbones:
-                self.deit_count_cls_token_select += torch.sum(pooled_idxs==0).item()  # Count the number of times the cls token is selected as the most probable patch.
-            
+                self.count_tokens=(pooled_idxs==0).sum().item()  # Count the number of times the cls token is selected as the most probable patch.
+            elif self.patch_extractor_model in evits_backbones:
+                _, evit_inattn_tokens_idx = self.get_evit_tokens_idx()
+                pooled_idxs_exp = pooled_idxs.unsqueeze(1).expand(-1, evit_inattn_tokens_idx.shape[1])
+                self.count_tokens = (evit_inattn_tokens_idx == pooled_idxs_exp).any(dim=1).sum().item()
+
             return pooled_probs     
     
     def AvgPooling(self, representation):
@@ -174,10 +179,15 @@ class MIL(nn.Module):
                 pooled_scores, pooled_idxs = torch.topk(representation, k=topk, dim=1)
                 pooled_probs = torch.softmax(pooled_scores, dim=2)
                 pooled_probs = torch.mean(pooled_probs, dim=1)
-                        
+                
+            # Count the number of times the cls_token or the fuse_tokens are selected as the most probable patch.            
             if self.patch_extractor_model in deits_backbones:
-                self.deit_count_cls_token_select += (torch.sum(pooled_idxs==0).item()/topk) # Count the number of times the cls token is selected as the most probable patch.
-             
+                self.count_tokens=torch.sum(pooled_idxs==0).item() # Count the number of times the cls token is selected as the most probable patch.
+            elif self.patch_extractor_model in evits_backbones:
+                _, evit_inattn_tokens_idx = self.get_evit_tokens_idx()
+                pooled_idxs_exp=pooled_idxs.unsqueeze(2).expand(-1, -1, evit_inattn_tokens_idx.shape[1])
+                self.count_tokens=(evit_inattn_tokens_idx.unsqueeze(1)==pooled_idxs_exp).any(dim=2).sum().item()
+                             
             return pooled_probs
         
     def MaskMaxPooling(self, representation, mask):

@@ -192,3 +192,7 @@ visualization/instance-mask_max/
 
 # Pretrained EViTs
 Feature_Extractors/Pretrained_EViTs/
+
+
+# Models
+models/
