@@ -42,7 +42,7 @@ class MIL(nn.Module):
                 is_training: bool = True,
                 patch_extractor_model: str = "resnet18.tv_in1k",
                 patch_extractor: nn.Module = None,
-                device: str = "cuda:1",
+                device: str = "cuda:0",
                 args=None) -> None:
     
         super().__init__()
@@ -109,18 +109,28 @@ class MIL(nn.Module):
             if self.num_classes == 2:
                 representation = torch.softmax(representation, dim=2)
                 pooled_probs, pooled_idxs = torch.max(representation[:,:,0], dim=1) # Get the maximum probability of the melanoma class (MEL:0) per bag.
-                pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1) # Concatenate the pooled probabilities with the pooled NV probabilities -> In order to use the same NLLLoss function.
+                pooled_probs = representation[torch.arange(pooled_probs.shape[0]), pooled_idxs]
             else:
-                pooled_scores, pooled_idxs = torch.max(representation, dim=1) # Get the maximum probability of the most probable class per bag.
-                pooled_probs=torch.softmax(pooled_scores, dim=1)
+                if self.args.multiclass_method == "first":
+                    pooled_scores, pooled_idxs = torch.max(representation, dim=1) # Get the maximum probability of the most probable class per bag.
+                    pooled_probs = torch.softmax(pooled_scores, dim=1)
+                elif self.args.multiclass_method == "second":
+                    probs = torch.softmax(representation, dim=2)
+                    pooled_probs = []
+                    for i in range(probs.size(0)):
+                        pooled_probs.append(probs[i][int(torch.argmax(probs[i])/self.num_classes)])
+                    pooled_probs = torch.stack(pooled_probs).to(self.device)
             
             # Count the number of times the cls_token or the fuse_tokens are selected as the most probable patch.            
             if self.patch_extractor_model in deits_backbones:
                 self.count_tokens=(pooled_idxs==0).sum().item()  # Count the number of times the cls token is selected as the most probable patch.
             elif self.patch_extractor_model in evits_backbones:
-                _, evit_inattn_tokens_idx = self.get_evit_tokens_idx()
-                pooled_idxs_exp = pooled_idxs.unsqueeze(1).expand(-1, evit_inattn_tokens_idx.shape[1])
-                self.count_tokens = (evit_inattn_tokens_idx == pooled_idxs_exp).any(dim=1).sum().item()
+                if self.args.fuse_token_filled and self.args.fuse_token: 
+                    _, evit_inattn_tokens_idx = self.get_evit_tokens_idx()
+                    pooled_idxs_exp = pooled_idxs.unsqueeze(1).expand(-1, evit_inattn_tokens_idx.shape[1])
+                    self.count_tokens = (evit_inattn_tokens_idx == pooled_idxs_exp).any(dim=1).sum().item()
+                if self.args.fuse_token and not self.args.fuse_token_filled:
+                    self.count_tokens=(pooled_idxs==self.num_patches-1).sum().item()
 
             return pooled_probs     
     
@@ -144,8 +154,13 @@ class MIL(nn.Module):
             Returns:
                 torch.Tensor: Pooled probs. Shape (Batch_size, num_classes). 
             """
-            representation = torch.softmax(representation, dim=2)
-            pooled_probs = torch.mean(representation, dim=1)
+            if self.num_classes == 2 or self.args.multiclass_method == "second":
+                probs = torch.softmax(representation, dim=2)
+                pooled_probs = torch.mean(probs, dim=1)
+            elif self.args.multiclass_method == "first":
+                pooled_represent= torch.mean(representation, dim=1)
+                pooled_probs = torch.softmax(pooled_represent, dim=1)
+                
             return pooled_probs
     
     def TopKPooling(self, representation, topk):
@@ -173,21 +188,33 @@ class MIL(nn.Module):
             if self.num_classes == 2:
                 representation = torch.softmax(representation, dim=2)
                 pooled_probs, pooled_idxs = torch.topk(representation[:,:,0], k=topk, dim=1) # Get the maximum probability of the melanoma class (MEL:0) for the top k instances (per bag).
+                pooled_probs = representation[torch.arange(pooled_probs.shape[0]).unsqueeze(1), pooled_idxs]
                 pooled_probs = torch.mean(pooled_probs, dim=1)
-                pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1)
             else:
-                pooled_scores, pooled_idxs = torch.topk(representation, k=topk, dim=1)
-                pooled_probs = torch.softmax(pooled_scores, dim=2)
-                pooled_probs = torch.mean(pooled_probs, dim=1)
-                
+                if self.args.multiclass_method == "first":
+                    pooled_scores, pooled_idxs = torch.topk(representation, k=topk, dim=1)
+                    pooled_scores = torch.mean(pooled_scores, dim=1)
+                    pooled_probs = torch.softmax(pooled_scores, dim=1)
+                elif self.args.multiclass_method == "second":
+                    probs = torch.softmax(representation, dim=2)
+                    pooled_probs = []
+                    for i in range(probs.size(0)):
+                        max_vals,_ = torch.max(probs[i], dim=1) # Compute the max value row-wise
+                        _, indices = torch.topk(max_vals, topk) # Get the indices of the top-k values
+                        pooled_probs.append(torch.mean(probs[i][indices], dim=0)) # Compute the mean of the top-k values
+                    pooled_probs = torch.stack(pooled_probs).to(self.device)
+                                        
             # Count the number of times the cls_token or the fuse_tokens are selected as the most probable patch.            
             if self.patch_extractor_model in deits_backbones:
                 self.count_tokens=torch.sum(pooled_idxs==0).item() # Count the number of times the cls token is selected as the most probable patch.
             elif self.patch_extractor_model in evits_backbones:
-                _, evit_inattn_tokens_idx = self.get_evit_tokens_idx()
-                pooled_idxs_exp=pooled_idxs.unsqueeze(2).expand(-1, -1, evit_inattn_tokens_idx.shape[1])
-                self.count_tokens=(evit_inattn_tokens_idx.unsqueeze(1)==pooled_idxs_exp).any(dim=2).sum().item()
-                             
+                if self.args.fuse_token_filled and self.args.fuse_token: 
+                    _, evit_inattn_tokens_idx = self.get_evit_tokens_idx()
+                    pooled_idxs_exp=pooled_idxs.unsqueeze(2).expand(-1, -1, evit_inattn_tokens_idx.shape[1])
+                    self.count_tokens=(evit_inattn_tokens_idx.unsqueeze(1)==pooled_idxs_exp).any(dim=2).sum().item()
+                if self.args.fuse_token and not self.args.fuse_token_filled:
+                    self.count_tokens=torch.sum(pooled_idxs==self.num_patches-1).item() # Count the number of times the fuse token is selected as the most probable patch.
+                      
             return pooled_probs
         
     def MaskMaxPooling(self, representation, mask):
@@ -225,13 +252,21 @@ class MIL(nn.Module):
             if self.num_classes == 2:
                 representation = torch.softmax(representation, dim=2)
                 masked_probs = representation[:,:,0] * pooled_mask # Apply mask to the probabilities of the melanoma class (MEL:0)                 
-                pooled_probs,_ = torch.max(masked_probs, dim=1)
-                pooled_probs = torch.cat((pooled_probs.unsqueeze(1), 1-pooled_probs.unsqueeze(1)), dim=1)
+                pooled_probs, pooled_idxs = torch.max(masked_probs, dim=1)
+                pooled_probs = representation[torch.arange(pooled_probs.shape[0]), pooled_idxs]
                 pooled_probs = pooled_probs.to(self.device)
             else:
-                pooled_mask = pooled_mask.unsqueeze(-1).expand(-1, -1, self.num_classes) # Transform mask into shape (Batch_size, N, num_classes)
-                masked_probs = representation * pooled_mask # Shape (Batch_size, N, num_classes)
-                raise ValueError(f"At the moment, we are only using the MaskMaxPooling for the binary case.\n")
+                pool_mask = ~pooled_mask.bool()
+                pooled_mask = pooled_mask.float()
+                pool_mask = pool_mask.unsqueeze(-1).expand(-1, -1, self.num_classes) # Transform mask into shape (Batch_size, N, num_classes)
+                pool_mask = pool_mask*torch.Tensor([-1000000])
+                masked_scores = representation + pool_mask
+                
+                if self.args.multiclass_method == 'first':
+                    pooled_scores, pooled_idxs = torch.max(masked_scores, dim=1) 
+                    pooled_probs = torch.softmax(pooled_scores, dim=1)    
+                elif self.args.multiclass_method == 'second':
+                    raise ValueError(f"At the moment, we are only using the MaskMaxPooling for the first multiclass method.\n")
                
             return pooled_probs
     
@@ -352,7 +387,7 @@ class MIL(nn.Module):
         if not self.args.cls_token:
             x = x[:,1:,:] # remove cls token
             
-        if self.args.fuse_token and self.patch_extractor_model in evits_backbones:
+        if self.args.fuse_token_filled and self.patch_extractor_model in evits_backbones:
             fuse_token = x[:,-1,:]
             x = x[:,:-1,:]
             x, inattn_tokens_idx=EViT_Full_Fused_Attn_Map(x, fuse_token, attn_tokens_idx, 196, self.embedding_size, x.size(0))

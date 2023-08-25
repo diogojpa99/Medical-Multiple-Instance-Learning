@@ -29,7 +29,7 @@ import os
 
 def get_args_parser():
    
-    parser = argparse.ArgumentParser('MIL - Version 2', add_help=False)
+    parser = argparse.ArgumentParser('Deep-MIL', add_help=False)
     
     ## Add arguments here
     parser.add_argument('--output_dir', default='MIL-Output', help='path where to save, empty for no saving')
@@ -48,7 +48,6 @@ def get_args_parser():
     # Data parameters
     parser.add_argument('--input_size', default=224, type=int, help='image size')
     parser.add_argument('--patch_size', default=16, type=int, help='patch size')
-    parser.add_argument('--nb_classes', default=2, type=int, help='number of classes')
     parser.add_argument('--num_workers', default=8, type=int, help='number of data loading workers')
     parser.add_argument('--pin_mem', default=True, type=bool, help='pin memory')
     
@@ -210,13 +209,21 @@ def get_args_parser():
     parser.add_argument('--mask_val', default='', type=str, help='path to val directory of binary segmentation masks')
     
     # EViT Parameters
-    parser.add_argument('--fuse_token', action='store_true', help='whether to fuse the inattentive tokens')
+    parser.add_argument('--fuse_token', action='store_true', help='Whether to fuse the inattentive tokens')
+    parser.add_argument('--fuse_token_filled', action='store_true', help='Whether to fuse the inattentive tokens with filled tokens')
     parser.add_argument('--base_keep_rate', type=float, default=0.7, help='Base keep rate (default: 0.7)')
     parser.add_argument('--drop_loc', default='(3, 6, 9)', type=str, help='the layer indices for shrinking inattentive tokens')
     
     # *DeiT with cls token
     parser.add_argument('--cls_token', action='store_true', help='whether to add cls token')
     
+    # Multiclass Parameters
+    parser.add_argument('--multiclass_method', type=str, default='first', choices=['first', 'second'],
+                        help="For MIL there is no absolute solution for the multiclass problem. This first method consists in applying the\
+                            MIL-Pooling function on the scores of the different classes, and then apply the softmax function to the resulting tensor.\
+                            The second method consists in applying the Softmax function on the scores of the different patch, and \
+                            then apply the MIL-Pooling function to the resulting tensor.")
+
     return parser
 
 def main(args):
@@ -249,8 +256,8 @@ def main(args):
         )
         wandb.run.name = args.run_name
         
-    """ if args.debug:
-        wandb=print """
+        """ if args.debug:
+            wandb=print """
     
     if args.training: # Print arguments
         print("----------------- Args -------------------")
@@ -354,6 +361,28 @@ def main(args):
                           drop_path_rate=0.2,
                           feature_extractor=True,
                           desired_output_size=(args.input_size // args.patch_size))
+    elif args.feature_extractor == 'deit_small_patch16_224':
+        num_chs = 384
+        model_args = dict(img_size=args.input_size,
+                          patch_size=args.patch_size,
+                          embed_dim=num_chs, 
+                          depth=12, 
+                          num_heads=6,
+                          drop_rate=args.drop,
+                          drop_path_rate=args.drop_path,
+                          attn_drop_rate=0.,
+                          feature_extractor=True)
+    elif args.feature_extractor == 'deit_base_patch16_224':
+        num_chs = 768
+        model_args = dict(img_size=args.input_size,
+                          patch_size=args.patch_size,
+                          embed_dim=num_chs, 
+                          depth=12, 
+                          num_heads=12,
+                          drop_rate=args.drop,
+                          drop_path_rate=args.drop_path,
+                          attn_drop_rate=0.,
+                          feature_extractor=True)
     elif args.feature_extractor == 'deit_small_patch16_shrink_base':
         num_chs = 384
         model_args = dict(base_keep_rate=args.base_keep_rate,
@@ -570,8 +599,9 @@ def main(args):
         
         print('\n---------------- Train stats for the last epoch ----------------\n',
             f"Acc: {train_stats['acc1']:.3f} | Bacc: {train_stats['bacc']:.3f} | F1-score: {np.mean(train_stats['f1_score']):.3f} | \n",
-            f"Precision[MEL]: {train_stats['precision'][0]:.3f} | Precision[NV]: {train_stats['precision'][1]:.3f} | \n",
-            f"Recall[MEL]: {train_stats['recall'][0]:.3f} | Recall[NV]: {train_stats['recall'][1]:.3f} | \n",
+            f"Class-to-idx: {train_set.class_to_idx} | \n",
+            f"Precisions: {best_results['precision']} | \n",
+            f"Recalls: {best_results['recall']} | \n",
             f"Confusion Matrix: {train_stats['confusion_matrix']}\n",
             f"Training time {total_time_str}\n")
         
@@ -593,7 +623,7 @@ def main(args):
     return
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('MIL - Version 2', parents=[get_args_parser()])
+    parser = argparse.ArgumentParser('Deep-MIL', parents=[get_args_parser()])
     args = parser.parse_args()
     
     if args.output_dir:

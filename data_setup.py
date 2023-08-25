@@ -99,11 +99,13 @@ def build_transform(is_train, args):
             re_mode=args.remode,
             re_count=args.recount,
         )
+                        
         if not resize_im:
             # replace RandomResizedCropAndInterpolation with
             # RandomCrop
             transform.transforms[0] = transforms.RandomCrop(
                 args.input_size, padding=4)
+            
         return transform
 
     t = []

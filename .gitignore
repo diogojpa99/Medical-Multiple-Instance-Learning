@@ -196,3 +196,5 @@ Feature_Extractors/Pretrained_EViTs/
 
 # Models
 models/
+
+plots.py

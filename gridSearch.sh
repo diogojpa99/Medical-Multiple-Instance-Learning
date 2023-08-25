@@ -539,3 +539,119 @@ do
         echo "Output dir for the last experiment: $logdir"
     done
 done
+
+
+###################################################################################################################################################
+###################################################################################################################################################
+###################################################################################################################################################
+
+################################## MIL-Evit-With many fused tokens in the place of the inattentive tokens #########################################
+
+datapath="../Data/ISIC2019bea_mel_nevus_limpo"
+now=$(date +"%Y%m%d")
+
+mil_types=('instance' 'embedding')
+pooling_types=( 'avg' 'max' 'topk' )
+lr=2e-4
+sched='cosine'
+drop=0.0
+opt='adamw'
+
+for mil_t in "${mil_types[@]}"
+do
+    for pool in "${pooling_types[@]}"
+    do
+
+        logdir="MIL-evit_small_07_fusedToken_filled-$mil_t-$pool-lr_init_$lr-Time_$now"
+        echo "----------------- Output dir: $logdir --------------------"
+        
+        python3 main.py \
+        --project_name "Thesis" \
+        --run_name "$logdir" \
+        --hardware "Server" \
+        --gpu "cuda:1" \
+        --feature_extractor "deit_small_patch16_shrink_base" \
+        --fuse_token \
+        --fuse_token_filled \
+        --drop_path 0.1 \
+        --num_workers 12 \
+        --batch_size 256 \
+        --epochs 90 \
+        --input_size 224 \
+        --mil_type $mil_t \
+        --pooling_type $pool \
+        --drop $drop \
+        --opt "$opt" \
+        --lr $lr \
+        --lr_scheduler \
+        --sched "$sched" \
+        --lr_cycle_decay 0.8 \
+        --min_lr 2e-4 \
+        --warmup_epochs 5 \
+        --warmup_lr 1e-4 \
+        --weight-decay 1e-6 \
+        --patience 200 \
+        --counter_saver_threshold 100 \
+        --batch_aug \
+        --loss_scaler \
+        --data_path "$datapath" \
+        --output_dir "evit_small_07/evit_small_07_fusedToken/$logdir"
+
+        echo "Output dir for the last experiment: $logdir"
+    done
+done
+
+################################## MIL-Evit-with fused token #########################################
+
+datapath="../Data/ISIC2019bea_mel_nevus_limpo"
+now=$(date +"%Y%m%d")
+
+mil_types=('instance' 'embedding')
+pooling_types=( 'avg' 'max' 'topk' )
+lr=2e-4
+sched='cosine'
+drop=0.0
+opt='adamw'
+
+for mil_t in "${mil_types[@]}"
+do
+    for pool in "${pooling_types[@]}"
+    do
+
+        logdir="MIL-evit_small_07_fusedToken_filled-$mil_t-$pool-lr_init_$lr-Time_$now"
+        echo "----------------- Output dir: $logdir --------------------"
+        
+        python3 main.py \
+        --project_name "Thesis" \
+        --run_name "$logdir" \
+        --hardware "Server" \
+        --gpu "cuda:1" \
+        --feature_extractor "deit_small_patch16_shrink_base" \
+        --fuse_token \
+        --drop_path 0.1 \
+        --num_workers 12 \
+        --batch_size 256 \
+        --epochs 90 \
+        --input_size 224 \
+        --mil_type $mil_t \
+        --pooling_type $pool \
+        --drop $drop \
+        --opt "$opt" \
+        --lr $lr \
+        --lr_scheduler \
+        --sched "$sched" \
+        --lr_cycle_decay 0.8 \
+        --min_lr 2e-4 \
+        --warmup_epochs 5 \
+        --warmup_lr 1e-4 \
+        --weight-decay 1e-6 \
+        --patience 200 \
+        --counter_saver_threshold 100 \
+        --batch_aug \
+        --loss_scaler \
+        --data_path "$datapath" \
+        --output_dir "evit_small_07/evit_small_07_fusedToken/$logdir"
+
+        echo "Output dir for the last experiment: $logdir"
+    done
+done
