@@ -159,7 +159,8 @@ def Load_Pretrained_FeatureExtractor(path, model, args):
     # Compare the keys of the checkpoint and the model
     if args.feature_extractor in mil.vits_backbones:
         checkpoint = checkpoint['model']
-        Load_Pretrained_ViT_Interpolate_Pos_Embed(model, checkpoint)
+        if args.pos_encoding_flag:
+            Load_Pretrained_ViT_Interpolate_Pos_Embed(model, checkpoint)
         
     elif args.feature_extractor == 'densenet169.tv_in1k':
         checkpoint = densenet._filter_torchvision_pretrained(checkpoint)

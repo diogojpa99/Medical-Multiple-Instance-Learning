@@ -48,6 +48,7 @@ def get_args_parser():
     # Data parameters
     parser.add_argument('--input_size', default=224, type=int, help='image size')
     parser.add_argument('--patch_size', default=16, type=int, help='patch size')
+    parser.add_argument('--nb_classes', default=2, type=int, help='number of classes')
     parser.add_argument('--num_workers', default=8, type=int, help='number of data loading workers')
     parser.add_argument('--pin_mem', default=True, type=bool, help='pin memory')
     
@@ -65,7 +66,7 @@ def get_args_parser():
     # MIL parameters
     parser.add_argument('--pooling_type', default='max', choices=['max', 'avg', 'topk', 'mask_avg', 'mask_max'], type=str, help="")
     parser.add_argument('--mil_type', default='instance', choices=['instance', 'attention', 'embedding'], type=str, help="")
-    parser.add_argument('--topk', default=25, type=int, help='topk for topk pooling')
+    parser.add_argument('--topk', default=49, type=int, help='k for top-k average pooling')
     
     # Feature Extractor parameters
     parser.add_argument('--feature_extractor', default='resnet18.tv_in1k', type=str, metavar='MODEL',
@@ -98,7 +99,7 @@ def get_args_parser():
     parser.add_argument('--images_path', default='', type=str, help="")
     parser.add_argument('--visualize_num_images', default=8, type=int, help="")
     parser.add_argument('--vis_mask_path', default='', type=str, help="")
-    parser.add_argument('--vis_num', default=1, type=int, help="")
+    parser.add_argument('--vis_num', default=5, type=int, help="")
     
     # Imbalanced dataset parameters
     parser.add_argument('--class_weights', action='store_true', default=True, help='Enabling class weighting')
@@ -216,7 +217,8 @@ def get_args_parser():
     
     # *DeiT with cls token
     parser.add_argument('--cls_token', action='store_true', help='whether to add cls token')
-    
+    parser.add_argument('--pos_encoding_flag', action='store_false', default=True, help='Whether to use positional encoding or not.')
+
     # Multiclass Parameters
     parser.add_argument('--multiclass_method', type=str, default='first', choices=['first', 'second'],
                         help="For MIL there is no absolute solution for the multiclass problem. This first method consists in applying the\
@@ -256,8 +258,8 @@ def main(args):
         )
         wandb.run.name = args.run_name
         
-        """ if args.debug:
-            wandb=print """
+    if args.debug:
+        wandb=print
     
     if args.training: # Print arguments
         print("----------------- Args -------------------")
@@ -326,28 +328,6 @@ def main(args):
                           drop_path_rate=0.,
                           drop_block_rate=0.,
                           feature_extractor=True)
-    elif args.feature_extractor == 'deit_small_patch16_224':
-        num_chs = 384
-        model_args = dict(img_size=args.input_size,
-                          patch_size=args.patch_size,
-                          embed_dim=num_chs, 
-                          depth=12, 
-                          num_heads=6,
-                          drop_rate=args.drop,
-                          drop_path_rate=args.drop_path,
-                          attn_drop_rate=0.,
-                          feature_extractor=True)
-    elif args.feature_extractor == 'deit_base_patch16_224':
-        num_chs = 768
-        model_args = dict(img_size=args.input_size,
-                          patch_size=args.patch_size,
-                          embed_dim=num_chs, 
-                          depth=12, 
-                          num_heads=12,
-                          drop_rate=args.drop,
-                          drop_path_rate=args.drop_path,
-                          attn_drop_rate=0.,
-                          feature_extractor=True)
     elif args.feature_extractor == 'vgg16.tv_in1k': 
         model_args = dict(cfg=[64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512],
                           drop_rate=args.drop,
@@ -371,7 +351,8 @@ def main(args):
                           drop_rate=args.drop,
                           drop_path_rate=args.drop_path,
                           attn_drop_rate=0.,
-                          feature_extractor=True)
+                          feature_extractor=True,
+                          pos_embedding = args.pos_encoding_flag)
     elif args.feature_extractor == 'deit_base_patch16_224':
         num_chs = 768
         model_args = dict(img_size=args.input_size,
@@ -382,7 +363,8 @@ def main(args):
                           drop_rate=args.drop,
                           drop_path_rate=args.drop_path,
                           attn_drop_rate=0.,
-                          feature_extractor=True)
+                          feature_extractor=True,
+                          pos_embedding = args.pos_encoding_flag)
     elif args.feature_extractor == 'deit_small_patch16_shrink_base':
         num_chs = 384
         model_args = dict(base_keep_rate=args.base_keep_rate,
@@ -393,7 +375,8 @@ def main(args):
                           drop_block_rate=None,
                           fuse_token=args.fuse_token,
                           img_size=(args.input_size, args.input_size),
-                          feature_extractor=True)
+                          feature_extractor=True,
+                          pos_embedding = args.pos_encoding_flag)
     else:
         raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
      
@@ -516,7 +499,7 @@ def main(args):
         best_val_bacc = 0.0
         freeze_patch_extractor_flag = False      
         early_stopping = engine.EarlyStopping(patience=args.patience, verbose=True, delta=args.delta, path=str(output_dir) +'/checkpoint.pth')
-       
+               
         print(f"******* Start training for {(args.epochs + args.cooldown_epochs)} epochs. *******") 
         for epoch in range(args.start_epoch, (args.epochs + args.cooldown_epochs)):
             

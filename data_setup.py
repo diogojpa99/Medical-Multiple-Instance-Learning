@@ -89,17 +89,24 @@ def build_transform(is_train, args):
     resize_im = args.input_size > 32
     if is_train:
         # this should always dispatch to transforms_imagenet_train
-        transform = create_transform(
-            input_size=args.input_size,
-            is_training=True,
-            color_jitter=args.color_jitter,
-            auto_augment=args.aa,
-            interpolation=args.train_interpolation,
-            re_prob=args.reprob,
-            re_mode=args.remode,
-            re_count=args.recount,
-        )
-                        
+        
+        if args.nb_classes == 2:
+            transform = create_transform(
+                input_size=args.input_size,
+                is_training=True,
+                color_jitter=args.color_jitter,
+                auto_augment=args.aa,
+                interpolation=args.train_interpolation,
+                re_prob=args.reprob,
+                re_mode=args.remode,
+                re_count=args.recount,
+            )
+        else:
+            transform = create_transform(
+                input_size=args.input_size,
+                is_training=True,            
+            )
+                         
         if not resize_im:
             # replace RandomResizedCropAndInterpolation with
             # RandomCrop

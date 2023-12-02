@@ -415,6 +415,7 @@ class VisionTransformer(nn.Module):
             block_fn: Callable = Block,
             mlp_layer: Callable = Mlp,
             feature_extractor: bool = False,
+            pos_embedding: bool = True,
     ):
         """
         Args:
@@ -466,7 +467,10 @@ class VisionTransformer(nn.Module):
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) if class_token else None
         embed_len = num_patches if no_embed_class else num_patches + self.num_prefix_tokens
+        
+        self._pos_embed_flag = pos_embedding
         self.pos_embed = nn.Parameter(torch.randn(1, embed_len, embed_dim) * .02)
+        
         self.pos_drop = nn.Dropout(p=pos_drop_rate)
         if patch_drop_rate > 0:
             self.patch_drop = PatchDropout(
@@ -550,10 +554,12 @@ class VisionTransformer(nn.Module):
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
     def _pos_embed(self, x):
+        
         if self.no_embed_class:
             # deit-3, updated JAX (big vision)
             # position embedding does not overlap with class token, add then concat
-            x = x + self.pos_embed
+            if self._pos_embed_flag:
+                x = x + self.pos_embed
             if self.cls_token is not None:
                 x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
         else:
@@ -561,7 +567,8 @@ class VisionTransformer(nn.Module):
             # pos_embed has entry for class token, concat then add
             if self.cls_token is not None:
                 x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
-            x = x + self.pos_embed
+            if self._pos_embed_flag:
+                x = x + self.pos_embed
         return self.pos_drop(x)
 
     def _intermediate_layers(

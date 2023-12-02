@@ -294,7 +294,8 @@ class EViT(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=True, representation_size=None, distilled=False,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0., embed_layer=PatchEmbed, norm_layer=None,
-                 act_layer=None, weight_init='', keep_rate=(1, ), fuse_token=False, feature_extractor=False):
+                 act_layer=None, weight_init='', keep_rate=(1, ), fuse_token=False, feature_extractor=False, 
+                 pos_embedding=True):
         """
         Args:
             img_size (int, tuple): input image size
@@ -338,7 +339,10 @@ class EViT(nn.Module):
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.dist_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) if distilled else None
+        
+        self.pos_embed_flag = pos_embedding
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + self.num_tokens, embed_dim))
+        
         self.pos_drop = nn.Dropout(p=drop_rate)
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
@@ -432,18 +436,22 @@ class EViT(nn.Module):
 
         # for input with another resolution, interpolate the positional embedding.
         # used for finetining a ViT on images with larger size.
-        pos_embed = self.pos_embed
-        if x.shape[1] != pos_embed.shape[1]:
-            assert h == w  # for simplicity assume h == w
-            real_pos = pos_embed[:, self.num_tokens:]
-            hw = int(math.sqrt(real_pos.shape[1]))
-            true_hw = int(math.sqrt(x.shape[1] - self.num_tokens))
-            real_pos = real_pos.transpose(1, 2).reshape(1, self.embed_dim, hw, hw)
-            new_pos = F.interpolate(real_pos, size=true_hw, mode='bicubic', align_corners=False)
-            new_pos = new_pos.reshape(1, self.embed_dim, -1).transpose(1, 2)
-            pos_embed = torch.cat([pos_embed[:, :self.num_tokens], new_pos], dim=1)
+        
+        if self.pos_embed_flag:
+            pos_embed = self.pos_embed
+            if x.shape[1] != pos_embed.shape[1]:
+                assert h == w  # for simplicity assume h == w
+                real_pos = pos_embed[:, self.num_tokens:]
+                hw = int(math.sqrt(real_pos.shape[1]))
+                true_hw = int(math.sqrt(x.shape[1] - self.num_tokens))
+                real_pos = real_pos.transpose(1, 2).reshape(1, self.embed_dim, hw, hw)
+                new_pos = F.interpolate(real_pos, size=true_hw, mode='bicubic', align_corners=False)
+                new_pos = new_pos.reshape(1, self.embed_dim, -1).transpose(1, 2)
+                pos_embed = torch.cat([pos_embed[:, :self.num_tokens], new_pos], dim=1)
 
-        x = self.pos_drop(x + pos_embed)
+            x = self.pos_drop(x + pos_embed)
+        else:
+            x = self.pos_drop(x)
 
         left_tokens = []
         idxs = []

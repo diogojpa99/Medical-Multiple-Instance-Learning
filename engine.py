@@ -11,6 +11,8 @@ import numpy as np
 import sklearn
 from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score, accuracy_score, \
     balanced_accuracy_score
+    
+import mil
       
 def train_step(model: torch.nn.Module, 
                dataloader: torch.utils.data.DataLoader, 
@@ -219,6 +221,13 @@ def train_patch_extractor(model: torch.nn.Module,
     elif current_epoch >= warmup_epochs:
         for param in model.patch_extractor.parameters():
             param.requires_grad = True
+            
+        if not args.pos_encoding_flag and args.feature_extractor in mil.vits_backbones:
+            for i, (param_name, param) in enumerate(model.patch_extractor.named_parameters()):
+                if param_name == 'pos_embed':
+                    param.requires_grad = False
+                    break 
+                
         flag = False
         
     return flag

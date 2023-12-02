@@ -475,6 +475,7 @@ class InstanceMIL(MIL):
     
         return x #(Batch_size, num_classes)
 
+
 def Mask_Setup(mask):
     """ This function transforms the a binary mask shape (Batch_size, 1, 224, 224) into a mask of shape (Batch_size, N).
         If the Segmentation only contains zeros, the mask is transformed into a mask of ones.
