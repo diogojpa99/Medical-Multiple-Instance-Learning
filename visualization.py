@@ -127,7 +127,7 @@ def Grad_CAM(input, model, prediction, label, img):
     Both methods are equivalent. At least I tested both and the results are the same.
     
     """   
-     
+
     model.zero_grad() 
     prediction[:,label].backward(retain_graph=True)
     gradients = model.get_activations_gradient()
@@ -158,6 +158,9 @@ def Visualize_Activation_Instance_Binary(model: torch.nn.Module,
         transforms.Normalize((-mean[0] / std[0], -mean[1] / std[1], -mean[2] / std[2]), (1.0 / std[0], 1.0 / std[1], 1.0 / std[2])),
         transforms.ToPILImage()
     ])
+    
+    # (1) Set model to eval mode
+    model.eval()
 
     for j, (inputs, labels, idxs, masks) in enumerate(dataloader):
         
@@ -168,35 +171,32 @@ def Visualize_Activation_Instance_Binary(model: torch.nn.Module,
             input=inputs[i].unsqueeze(0)
             mask=masks[i].unsqueeze(0)
             image=reverse_transform(inputs[i])
-                            
-            # (3) Set model to eval mode
-            model.eval()
-            
-            # (4) Obtain the bag scores
+                                        
+            # (2) Obtain the bag scores
             bag_prob = model(input, None) if not args.mask_val else model(input, mask)
             predicted_class = int(torch.argmax(bag_prob))
                         
-            # (5) obtain the instance softmax scores
+            # (3) obtain the instance softmax scores
             patch_prob = model.get_patch_probs()
             if args.pooling_type == 'mask_max' or args.pooling_type == 'mask_avg':
                 patch_prob = ProcessMaskedPatchProbs(patch_prob, mask)
             
-            # (6) Transform to (batch_size, num_classes, 14, 14)
+            # (4) Transform to (batch_size, num_classes, 14, 14)
             patch_prob_map = patch_prob.permute(0, 2, 1)
-            patch_prob_map = patch_prob_map.reshape(1, 2, 14, 14)
+            patch_prob_map = patch_prob_map.reshape(args.batch_size, args.nb_classes, 14, 14)
    
-            # (7) Normalize the input image
+            # (5) Normalize the input image
             img = input.permute(0, 2, 3, 1).squeeze(0).data.cpu().numpy()
             img = (img - np.min(img)) / (np.max(img) - np.min(img))    
             
             if args.pooling_type == 'max' or args.pooling_type == 'mask_max':
                 key_patch = ShowKeyPatch(patch_prob, image) # (8) Obtain the key patch for melanoma class
 
-            # (9) Obtain the class probabilities for 'MEL' heatmap 
+            # (6) Obtain the class probabilities for 'MEL' heatmap 
             activation_map = patch_prob_map[:,0, :, :].unsqueeze(0)
             vis = ShowVis(activation_map, img)
             
-            # (10) Grad CAM for 'MEl' class
+            # (7) Grad CAM for 'MEl' class
             grad_cam_mel = Grad_CAM(input, model, bag_prob, 0, img)
             grad_cam_nv = Grad_CAM(input, model, bag_prob, 1, img)
             

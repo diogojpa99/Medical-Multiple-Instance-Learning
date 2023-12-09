@@ -481,7 +481,7 @@ def Mask_Setup(mask):
         If the Segmentation only contains zeros, the mask is transformed into a mask of ones.
     
     Args:
-        mask (torxh.Tensor):Binary mask of shape (Batch_size, 1, 224, 224).
+        mask (torch.Tensor):Binary mask of shape (Batch_size, 1, 224, 224).
     Returns:
         torch.tensor: Binary mask of shape (Batch_size, N).
     """ 

@@ -18,6 +18,23 @@ import mil
 
 import Feature_Extractors.DenseNet as densenet
 
+def Adjust_topk(topk, args):
+    """The top-k hyperparmeter is given as percentage. This function transforms the top-k into the number of patches to be selected.
+
+    Args:
+        topk (float): k (in % over the total number of patches N) in top-k average pooling operator
+        args (*args): args
+    """
+    
+    N=(args.input_size // args.patch_size) ** 2    
+    if args.feature_extractor in mil.cnns_backbones or mil.deits_backbones:
+        args.topk = int(N*(topk/100))
+    elif args.feature_extractor in mil.evits_backbones:
+        n_patches = int(N*(args.base_keep_rate**3)) # Assuming the default token removal layer composition in EViT: (3,6,9)
+        args.topk = n_patches*(topk/100)
+    else:
+        raise ValueError('Feature extractor not supported... Yet!')
+
 def Plot_TrainSet(trainset, args):
     
     output_dir = args.output_dir 
