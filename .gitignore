@@ -198,3 +198,6 @@ Feature_Extractors/Pretrained_EViTs/
 models/
 
 plots.py
+
+# ROI
+ROI_Eval_Vis/

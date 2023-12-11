@@ -2,6 +2,8 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import random
+import PIL
+from skimage import measure
 
 import torch
 import torchvision.transforms as transforms
@@ -49,6 +51,43 @@ def ShowKeyPatch(patch_prob, image):
     
     return key_patch
 
+def Show_Binary_Mask(mask:torch.Tensor,
+                     args=None) -> np.ndarray:
+    """Function that interpolates a 14x14 binary mask to 224x224.
+    Note that the patches of interest are the ones with value 1.
+
+    Args:
+        mask (torch.Tensor): Binary mask of shape (14, 14).
+        args (_type_, optional): _description_. Defaults to None.
+    """
+
+    mask = F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(224,224), mode='nearest').squeeze()
+    mask = mask.numpy()
+
+    return mask
+
+def Show_Mask_Border(mask:torch.Tensor,
+                      image:PIL.Image,
+                      color=(0, 1, 0),
+                      args=None):
+    
+    mask = Show_Binary_Mask(mask, args)
+
+    image_np = np.array(image)
+    overlay = image.copy()
+    #contours,_ = cv2.findContours((mask * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    #cv2.drawContours(overlay, contours, -1, color, thickness=2)  
+    
+    contours = measure.find_contours(mask, 0.5, fully_connected='low')
+
+    for contour in contours:
+        for i in range(len(contour) - 1):
+            start = tuple(map(int, contour[i][::-1]))  
+            end = tuple(map(int, contour[i + 1][::-1]))
+            cv2.line(overlay, start, end, color, thickness=2)
+            
+    return overlay
+                      
 def ProcessMaskedPatchProbs(patch_prob, mask):
     
     pooled_mask=mil.Mask_Setup(mask)
