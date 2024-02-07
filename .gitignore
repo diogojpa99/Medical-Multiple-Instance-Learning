@@ -201,3 +201,6 @@ plots.py
 
 # ROI
 ROI_Eval_Vis/
+
+# Shell scripts
+breast-runs-Binary.sh

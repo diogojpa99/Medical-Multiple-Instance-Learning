@@ -274,10 +274,6 @@ def Basic_Evaluation_ROIs(model: torch.nn.Module,
     Variables:
         results (torch.Tensor): Evaluation metrics for ROI detection.
         results[0] -> Patch probability heatmap; results[1] -> GradCam heatmap
-        results[:, 0] -> Acc
-        results[:, 1] -> Melanoma Acc
-        results[:, 2] -> Melanoma Recall
-        results[:, 3] -> Melanoma Precision
         
     Args:
         model (torch.nn.Module): Model to be evaluated
