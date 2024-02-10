@@ -1,4 +1,5 @@
 import data_setup, utils, mil, engine, visualization, evaluation
+
 import Feature_Extractors.ResNet as resnet
 import Feature_Extractors.VGG as vgg
 import Feature_Extractors.DenseNet as densenet
@@ -6,13 +7,11 @@ import Feature_Extractors.EfficientNet as efficientnet
 import Feature_Extractors.EViT as evit
 import Feature_Extractors.DEiT as deit, Feature_Extractors.ViT as vit
 
-
 import torch
 import torch.backends.cudnn as cudnn
 from timm.optim import create_optimizer
 from timm.utils import get_state_dict, ModelEma, NativeScaler
 from timm.scheduler import create_scheduler
-from timm.models import create_model
 import torch.optim as optim
 
 import argparse
@@ -37,9 +36,17 @@ def get_args_parser():
     parser.add_argument('--seed', default=42, type=int, help='random seed')
     parser.add_argument('--gpu', default='cuda:1', help='GPU id to use.')
     
+    parser.add_argument('--train', action='store_true', default=False, help='Training mode.')
+    parser.add_argument('--eval', action='store_true', default=False, help='Evaluation mode.')
+    parser.add_argument('--finetune', action='store_true', default=False, help='finetune mode.')
+    parser.add_argument('--infer', action='store_true', default=False, help='Inference mode.')
+    parser.add_argument('--debug', action='store_true', default=False, help='Debug mode.')
+    
     # Dataset
     parser.add_argument('--dataset', default='ISIC2019-Clean', type=str, 
-                        choices=['ISIC2019-Clean', 'PH2', 'Derm7pt','DDSM+CBIS+MIAS_CLAHE-Binary', 'DDSM+CBIS+MIAS_CLAHE', 'INbreast'], metavar='DATASET')
+                        choices=['ISIC2019-Clean', 'PH2', 'Derm7pt','DDSM+CBIS+MIAS_CLAHE-Binary-Mass_vs_Normal', 
+                                 'DDSM+CBIS+MIAS_CLAHE-Binary-Benign_vs_Malignant', 'DDSM+CBIS+MIAS_CLAHE', 
+                                 'DDSM+CBIS+MIAS_CLAHE-v2', 'INbreast'], metavar='DATASET')
     parser.add_argument('--dataset_type', default='Skin', type=str, choices=['Breast', 'Skin'], metavar='DATASET')
     
     # Wanb parameters
@@ -47,7 +54,6 @@ def get_args_parser():
     parser.add_argument('--hardware', default='Server', choices=['Server', 'Colab', 'MyPC'], help='hardware used')
     parser.add_argument('--run_name', default='MIL', help='name of the run')
     parser.add_argument('--wandb_flag', action='store_false', default=True, help='whether to use wandb')
-    parser.add_argument('--debug', action='store_true', default=False, help='Debug mode')
     
     # Data parameters
     parser.add_argument('--input_size', default=224, type=int, help='image size')
@@ -59,13 +65,7 @@ def get_args_parser():
     # Training parameters
     parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--batch_size', default=256, type=int)
-    parser.add_argument('--training', default=True, type=bool, help='training or testing')
-    parser.add_argument('--finetune', default=False, type=bool, help='finetune or not')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='start epoch')
-    parser.add_argument('--classifier_warmup_epochs', type=int, default=5, metavar='N')
-    
-    parser.add_argument('--drop', type=float, default=0.0, metavar='PCT', help='drop rate (default: 0.)')
-    parser.add_argument('--drop_path', type=float, default=0.1, metavar='PCT', help='Drop path rate (default: 0.1)')
         
     # MIL parameters
     parser.add_argument('--pooling_type', default='max', choices=['max', 'avg', 'topk', 'mask_avg', 'mask_max'], type=str, help="")
@@ -94,16 +94,8 @@ def get_args_parser():
     parser.add_argument('--efficientnet_feature_flag', action='store_true', default=False, help='efficientnet feature extractor flag')
 
     # Evaluation parameters
-    parser.add_argument('--evaluate', action='store_true', default=False, help='evaluate model on validation set')
     parser.add_argument('--evaluate_model_name', default='MIL_model_0.pth', type=str, help="")
     parser.add_argument('--resume', default='', type=str, metavar='PATH')
-    
-    # Visualization parameters
-    parser.add_argument('--visualize', action='store_true', default=False, help='Visualize model')
-    parser.add_argument('--images_path', default='', type=str, help="")
-    parser.add_argument('--visualize_num_images', default=8, type=int, help="")
-    parser.add_argument('--vis_mask_path', default='', type=str, help="")
-    parser.add_argument('--vis_num', default=5, type=int, help="")
     
     # Imbalanced dataset parameters
     parser.add_argument('--class_weights', default='None', choices=['None', 'balanced', 'median'], type=str, 
@@ -229,6 +221,13 @@ def get_args_parser():
                             MIL-Pooling function on the scores of the different classes, and then apply the softmax function to the resulting tensor.\
                             The second method consists in applying the Softmax function on the scores of the different patch, and \
                             then apply the MIL-Pooling function to the resulting tensor.")
+
+    # Visualization parameters
+    parser.add_argument('--visualize', action='store_true', default=False, help='Visualize model')
+    parser.add_argument('--images_path', default='', type=str, help="")
+    parser.add_argument('--visualize_num_images', default=8, type=int, help="")
+    parser.add_argument('--vis_mask_path', default='', type=str, help="")
+    parser.add_argument('--vis_num', default=5, type=int, help="")
     
     # ROI evaluation parameters
     parser.add_argument('--roi_eval', action='store_true', default=False, help='Evaluate the quality of the ROIs generated by the model')
@@ -237,12 +236,23 @@ def get_args_parser():
     parser.add_argument('--roi_gradcam_threshold', type=float, default=0.0, help='Threshold for the GradCam probability being considered as a ROI')
     parser.add_argument('--roi_eval_vis', action='store_true', default=False, help='Visualize the ROIs generated by the model')
     
+    # Breast Data setup parameters
+    parser.add_argument('--loader', default='Gray_PIL_Loader_Wo_Her', type=str, metavar='LOADER', choices=['Gray_PIL_Loader', 'Gray_PIL_Loader_Wo_He'])
+    parser.add_argument('--test_val_flag', default=True, type=bool, help='If True, the test set is used as the validation set.')
+    
+    # Dropout parameters
+    parser.add_argument('--drop', type=float, default=0.0, metavar='PCT', help='Dropout rate used in the classification head (default: 0.)')
+    parser.add_argument('--pos_drop_rate', type=float, default=0.0, metavar='PCT', help='Dropout rate for the positional encoding (default: 0.)')
+    parser.add_argument('--attn_drop_rate', type=float, default=0.0, metavar='PCT', help='Dropout rate for the attention layers (default: 0.)')
+    parser.add_argument('--drop_layers_rate', type=float, default=0.0, metavar='PCT', help='Dropout rate for the layers (default: 0.)')
+    parser.add_argument('--drop_block_rate', type=float, default=0.0, metavar='PCT', help='Dropout rate for the blocks (default: 0.)')
+    
     return parser
 
 def main(args):
     
-    if args.visualize or args.evaluate or args.finetune or args.roi_eval:
-        args.training = False
+    if not args.train and not args.eval and not args.finetune and not args.infer:
+        raise ValueError('The mode is not specified. Please specify the mode: --train, --eval, --finetune, --infer.')
 
     # Start a new wandb run to track this script
     if args.wandb_flag:
@@ -269,10 +279,10 @@ def main(args):
         )
         wandb.run.name = args.run_name
         
-    if args.debug:
-       wandb=print
+    # if args.debug:
+    #    wandb=print
     
-    if args.training: # Print arguments
+    if args.train or args.finetune: 
         print("----------------- Args -------------------")
         for arg in vars(args):
             print(f"{arg}: {getattr(args, arg)}")
@@ -319,97 +329,10 @@ def main(args):
      
     ############################ Define the Feature Extractor ############################
     
-    num_chs = 256
-    model_args = {}
-    if args.feature_extractor == 'resnet18.tv_in1k':
-        """ feature_extractor = ResNet.ResNet(block=ResNet.BasicBlock, 
-                                          layers=[2, 2, 2], 
-                                          desired_output_size=(args.input_size // args.patch_size)) """            
-        model_args = dict(block=resnet.BasicBlock, 
-                          layers=[2, 2, 2], 
-                          desired_output_size=(args.input_size // args.patch_size),
-                          drop_rate=args.drop,
-                          drop_path_rate=0.,
-                          drop_block_rate=0.,
-                          feature_extractor=True)
-    elif args.feature_extractor == 'resnet50.tv_in1k':
-        model_args = dict(block=resnet.Bottleneck, 
-                          layers=[3, 4, 6], 
-                          desired_output_size=(args.input_size // args.patch_size),
-                          drop_rate=args.drop,
-                          drop_path_rate=0.,
-                          drop_block_rate=0.,
-                          feature_extractor=True)
-    elif args.feature_extractor == 'vgg16.tv_in1k': 
-        model_args = dict(cfg=[64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512],
-                          drop_rate=args.drop,
-                          feature_extractor=True)
-    elif args.feature_extractor == 'densenet169.tv_in1k':
-        model_args = dict(block_config=(6, 12, 32),
-                          drop_rate=args.drop,
-                          feature_extractor=True)
-    elif args.feature_extractor == 'efficientnet_b3':
-        model_args = dict(drop_rate=0.3,
-                          drop_path_rate=0.2,
-                          feature_extractor=True,
-                          desired_output_size=(args.input_size // args.patch_size))
-    elif args.feature_extractor == 'deit_small_patch16_224':
-        num_chs = 384
-        model_args = dict(img_size=args.input_size,
-                          patch_size=args.patch_size,
-                          embed_dim=num_chs, 
-                          depth=12, 
-                          num_heads=6,
-                          drop_rate=args.drop,
-                          drop_path_rate=args.drop_path,
-                          attn_drop_rate=0.,
-                          feature_extractor=True,
-                          pos_embedding = args.pos_encoding_flag)
-    elif args.feature_extractor == 'deit_base_patch16_224':
-        num_chs = 768
-        model_args = dict(img_size=args.input_size,
-                          patch_size=args.patch_size,
-                          embed_dim=num_chs, 
-                          depth=12, 
-                          num_heads=12,
-                          drop_rate=args.drop,
-                          drop_path_rate=args.drop_path,
-                          attn_drop_rate=0.,
-                          feature_extractor=True,
-                          pos_embedding = args.pos_encoding_flag)
-    elif args.feature_extractor == 'deit_small_patch16_shrink_base':
-        num_chs = 384
-        model_args = dict(base_keep_rate=args.base_keep_rate,
-                          drop_loc=eval(args.drop_loc),
-                          num_classes=args.nb_classes,
-                          drop_rate=args.drop,
-                          drop_path_rate=args.drop_path,
-                          drop_block_rate=None,
-                          fuse_token=args.fuse_token,
-                          img_size=(args.input_size, args.input_size),
-                          feature_extractor=True,
-                          pos_embedding = args.pos_encoding_flag)
-    else:
-        raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
-     
-    feature_extractor = create_model(model_name=args.feature_extractor,
-                                    pretrained=False,  
-                                    **dict(model_args))
-    
-    if args.feature_extractor=='resnet18.tv_in1k' or args.feature_extractor=='resnet50.tv_in1k':
-        if feature_extractor.feature_info[-1]['module'] == 'layer3':
-            num_chs = feature_extractor.feature_info[-1]['num_chs']
-    elif args.feature_extractor=='vgg16.tv_in1k':
-        num_chs = feature_extractor.feature_info[-1]['num_chs']
-    elif args.feature_extractor=='densenet169.tv_in1k':
-        num_chs = feature_extractor.feature_info[-1]['num_chs']
-    elif args.feature_extractor=='efficientnet_b3':
-        num_chs = list(feature_extractor.named_parameters())[-1][1].shape[0]
-    
+    feature_extractor, num_chs = mil.Define_Feature_Extractor(args.feature_extractor, args.nb_classes, args)
     feature_extractor.to(device)
     args.pretrained_feature_extractor_path = mil.Pretrained_Feature_Extractures(args.feature_extractor, args)
-    if args.training:
-        if args.pretrained_feature_extractor_path: # Load the pretrained feature extractor
+    if args.finetune and args.pretrained_feature_extractor_path:
             utils.Load_Pretrained_FeatureExtractor(args.pretrained_feature_extractor_path, feature_extractor, args)
             
     ############################ Define the MIL Model ############################
@@ -422,7 +345,7 @@ def main(args):
                     embedding_size=num_chs,
                     dropout=args.drop,
                     pooling_type=args.pooling_type,
-                    is_training=args.training,
+                    is_training=(args.train or args.finetune),
                     patch_extractor_model=args.feature_extractor,
                     patch_extractor=feature_extractor,
                     device=device,
@@ -435,11 +358,9 @@ def main(args):
         model = mil.EmbeddingMIL(mil_type=args.mil_type, **dict(mil_args))
         
     elif args.mil_type == 'attention':
+        # TODO: Implement an attention MIL model
         raise NotImplementedError('This MIL implementation does not support this MIL type..yet!')
         
-    # TODO: Implement -> If finetune_ckpt then load the weights of the model
-    # Only then can I do model.to(device) and model_ema.to(device)
-    
     model.to(device)
     
     model_ema = None 
@@ -478,6 +399,8 @@ def main(args):
     ########################## Training or evaluating ###########################
     
     if args.resume:
+        
+        # Load the finetuned model
         utils.Load_Pretrained_MIL_Model(path=args.resume, model=model, args=args)
         
         if args.visualize:
@@ -500,7 +423,7 @@ def main(args):
                     else:
                         evaluation.Basic_Evaluation_ROIs(model=model, dataloader=data_loader_val, device=device, args=args)
 
-        elif args.evaluate:
+        elif args.eval:
             print('******* Starting evaluation process. *******')
             total_time_str = 0
             best_results = engine.evaluation(model=model,
@@ -514,31 +437,28 @@ def main(args):
                 print(f"[INFO] CLS token was selected {(best_results['count_tokens']*100):.2f}% of the times.")             
             elif args.feature_extractor in mil.evits_backbones and args.fuse_token:
                 print(f"[INFO] Fused tokens were selected {(best_results['count_tokens']*100):.2f}% of the times.")
+                
+        elif args.infer:
+            raise NotImplementedError('This MIL implementation does not support this MIL type..yet!')
+            # TODO: Add inference code
+            # Receive an input image
+            # Infer with the already finetuned model
+            # Return the prediction
+            # Note: Should define its own inference_loader, and so on
                             
-    elif args.training or args.finetune:
+    elif args.train or args.finetune:
         
         start_time = time.time()  
         train_results = {'loss': [], 'acc': [] , 'lr': []}
         val_results = {'loss': [], 'acc': [], 'f1': [], 'cf_matrix': [], 'bacc': [], 'precision': [], 'recall': []}
-        best_val_bacc = 0.0
-        freeze_patch_extractor_flag = False      
+        best_val_bacc = 0.0; best_results = None
         early_stopping = engine.EarlyStopping(patience=args.patience, verbose=True, delta=args.delta, path=str(output_dir) +'/checkpoint.pth')
                
         print(f"******* Start training for {(args.epochs + args.cooldown_epochs)} epochs. *******") 
         for epoch in range(args.start_epoch, (args.epochs + args.cooldown_epochs)):
-            
-            if epoch < args.classifier_warmup_epochs and freeze_patch_extractor_flag==False:
-                freeze_patch_extractor_flag = engine.train_patch_extractor(model=model,
-                                                                           current_epoch=epoch,
-                                                                           warmup_epochs=args.classifier_warmup_epochs,
-                                                                           flag=freeze_patch_extractor_flag,
-                                                                           args=args)
-            elif epoch >= args.classifier_warmup_epochs and freeze_patch_extractor_flag==True:
-                freeze_patch_extractor_flag = engine.train_patch_extractor(model=model,
-                                                                           current_epoch=epoch,
-                                                                           warmup_epochs=args.classifier_warmup_epochs,
-                                                                           flag=freeze_patch_extractor_flag,
-                                                                           args=args)
+    
+            engine.Classifier_Warmup(model,epoch,args.warmup_epochs,args)
+
             train_stats = engine.train_step(model=model,
                                             dataloader=data_loader_train,
                                             criterion=criterion,

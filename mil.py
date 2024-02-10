@@ -2,7 +2,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from Feature_Extractors import EViT as evit
+from typing import Union
+
+from timm.models import create_model
+
+import Feature_Extractors.ResNet as resnet
+import Feature_Extractors.VGG as vgg
+import Feature_Extractors.DenseNet as densenet
+import Feature_Extractors.EfficientNet as efficientnet
+import Feature_Extractors.EViT as evit
+import Feature_Extractors.DEiT as deit, Feature_Extractors.ViT as vit
 
 __all__ = ['InstanceMIL', 'EmbeddingMIL']  
 cnns_backbones = ['resnet18.tv_in1k', 'resnet50.tv_in1k', 'vgg16.tv_in1k', 'densenet169.tv_in1k', 'efficientnet_b3']
@@ -475,24 +484,117 @@ class InstanceMIL(MIL):
     
         return x #(Batch_size, num_classes)
 
+def Define_Feature_Extractor(feature_extractor:str, 
+                             nb_classes:int,
+                             args) -> Union[nn.Module, int]:
+    """ This function defines the feature extractor model and returns the model.
 
-def Mask_Setup(mask):
-    """ This function transforms the a binary mask shape (Batch_size, 1, 224, 224) into a mask of shape (Batch_size, N).
-        If the Segmentation only contains zeros, the mask is transformed into a mask of ones.
-    
     Args:
-        mask (torch.Tensor):Binary mask of shape (Batch_size, 1, 224, 224).
-    Returns:
-        torch.tensor: Binary mask of shape (Batch_size, N).
-    """ 
-    mask = F.max_pool2d(mask, kernel_size=16, stride=16)  # Transform Mask into shape (Batch_size, 1, 14, 14)
-    mask = mask.reshape(mask.size(0), mask.size(2)*mask.size(3)) # Reshape mask to shape (Batch_size, N)
-    
-    for i in range (len(mask)):
-        if len(torch.unique(mask[i])) == 1:
-            mask[i] = torch.ones_like(mask[i])
+        feature_extractor (str): Name of the feature extractor model.
+        nb_classes (int): Number of classes.
+        args (_type_): Arguments.
         
-    return mask
+    Raises:
+        NotImplementedError: If the model is not implemented.
+
+    Returns:
+        nn.Module: Feature extractor model.
+        int: Number of features.
+    """
+    
+    num_chs = 256
+    model_args = {}
+    
+    if args.feature_extractor == 'resnet18.tv_in1k':
+        """ feature_extractor = ResNet.ResNet(block=ResNet.BasicBlock, 
+                                          layers=[2, 2, 2], 
+                                          desired_output_size=(args.input_size // args.patch_size)) """            
+        model_args = dict(block=resnet.BasicBlock, 
+                          layers=[2, 2, 2], 
+                          desired_output_size=(args.input_size // args.patch_size),
+                          drop_rate=args.drop,
+                          drop_path_rate=args.drop_layers_rate,
+                          drop_block_rate=args.drop_block_rate,
+                          feature_extractor=True)
+    elif args.feature_extractor == 'resnet50.tv_in1k':
+        model_args = dict(block=resnet.Bottleneck, 
+                          layers=[3, 4, 6], 
+                          desired_output_size=(args.input_size // args.patch_size),
+                          drop_rate=args.drop,
+                          drop_path_rate=args.drop_layers_rate,
+                          drop_block_rate=args.drop_block_rate,
+                          feature_extractor=True)
+    elif args.feature_extractor == 'vgg16.tv_in1k': 
+        model_args = dict(cfg=[64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512],
+                          drop_rate=args.drop,
+                          feature_extractor=True)
+    elif args.feature_extractor == 'densenet169.tv_in1k':
+        model_args = dict(block_config=(6, 12, 32),
+                          drop_rate=args.drop,
+                          feature_extractor=True)
+    elif args.feature_extractor == 'efficientnet_b3':
+        model_args = dict(drop_rate=args.drop,  
+                          drop_path_rate=args.drop_layers_rate,
+                          feature_extractor=True,
+                          desired_output_size=(args.input_size // args.patch_size))
+    elif args.feature_extractor == 'deit_small_patch16_224':
+        num_chs = 384
+        model_args = dict(img_size=args.input_size,
+                          patch_size=args.patch_size,
+                          embed_dim=num_chs, 
+                          depth=12, 
+                          num_heads=6,
+                          drop_rate=args.drop,
+                          pos_drop_rate=args.pos_drop_rate,
+                          attn_drop_rate=args.attn_drop_rate,
+                          drop_path_rate=args.drop_layers_rate,
+                          feature_extractor=True,
+                          pos_embedding = args.pos_encoding_flag)
+    elif args.feature_extractor == 'deit_base_patch16_224':
+        num_chs = 768
+        model_args = dict(img_size=args.input_size,
+                          patch_size=args.patch_size,
+                          embed_dim=num_chs, 
+                          depth=12, 
+                          num_heads=12,
+                          drop_rate=args.drop,
+                          pos_drop_rate=args.pos_drop_rate,
+                          attn_drop_rate=args.attn_drop_rate,
+                          drop_path_rate=args.drop_layers_rate,
+                          feature_extractor=True,
+                          pos_embedding = args.pos_encoding_flag)
+    elif args.feature_extractor == 'deit_small_patch16_shrink_base':
+        num_chs = 384
+        model_args = dict(base_keep_rate=args.base_keep_rate,
+                          drop_loc=eval(args.drop_loc),
+                          num_classes=args.nb_classes,
+                          drop_rate=args.drop,
+                          pos_drop_rate=args.pos_drop_rate,
+                          attn_drop_rate=args.attn_drop_rate,
+                          drop_path_rate=args.drop_layers_rate,
+                          drop_block_rate=None,
+                          fuse_token=args.fuse_token,
+                          img_size=(args.input_size, args.input_size),
+                          feature_extractor=True,
+                          pos_embedding = args.pos_encoding_flag)
+    else:
+        raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
+     
+    feature_extractor = create_model(model_name=args.feature_extractor,
+                                    pretrained=False,  
+                                    **dict(model_args))
+    
+    if args.feature_extractor=='resnet18.tv_in1k' or args.feature_extractor=='resnet50.tv_in1k':
+        if feature_extractor.feature_info[-1]['module'] == 'layer3':
+            num_chs = feature_extractor.feature_info[-1]['num_chs']
+    elif args.feature_extractor=='vgg16.tv_in1k':
+        num_chs = feature_extractor.feature_info[-1]['num_chs']
+    elif args.feature_extractor=='densenet169.tv_in1k':
+        num_chs = feature_extractor.feature_info[-1]['num_chs']
+    elif args.feature_extractor=='efficientnet_b3':
+        num_chs = list(feature_extractor.named_parameters())[-1][1].shape[0]
+        
+    return feature_extractor, num_chs
 
 def Pretrained_Feature_Extractures(feature_extractor, args) -> str: 
     """Selects the right checkpoint for the selected feature extractor model.
@@ -537,6 +639,24 @@ def Pretrained_Feature_Extractures(feature_extractor, args) -> str:
     else:
         raise ValueError(f"Invalid feature_extractor: {feature_extractor}. Must be 'resnet18.tv_in1k',\
             'resnet50.tv_in1k', 'deit_small_patch16_224', 'deit_base_patch16_224', 'vgg16.tv_in1k', 'efficientnet' or 'deit_small_patch16_shrink_base'")
+        
+def Mask_Setup(mask):
+    """ This function transforms the a binary mask shape (Batch_size, 1, 224, 224) into a mask of shape (Batch_size, N).
+        If the Segmentation only contains zeros, the mask is transformed into a mask of ones.
+    
+    Args:
+        mask (torch.Tensor):Binary mask of shape (Batch_size, 1, 224, 224).
+    Returns:
+        torch.tensor: Binary mask of shape (Batch_size, N).
+    """ 
+    mask = F.max_pool2d(mask, kernel_size=16, stride=16)  # Transform Mask into shape (Batch_size, 1, 14, 14)
+    mask = mask.reshape(mask.size(0), mask.size(2)*mask.size(3)) # Reshape mask to shape (Batch_size, N)
+    
+    for i in range (len(mask)):
+        if len(torch.unique(mask[i])) == 1:
+            mask[i] = torch.ones_like(mask[i])
+        
+    return mask
         
 def EViT_Full_Fused_Attn_Map(x:torch.Tensor=None, 
                             fuse_token:torch.Tensor=None,

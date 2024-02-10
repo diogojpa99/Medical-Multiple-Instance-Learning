@@ -9,6 +9,8 @@ from torchvision import transforms
 import torchvision.transforms as transforms
 from torchvision.datasets import ImageFolder
 
+from typing import Union
+
 def Gray_PIL_Loader_Wo_He(path: str) -> Image.Image:
     """This function opens the image using PIL and converts it to grayscale.
     Then resizes the grayscale image to a square shape (width equals height) using bilinear interpolation  
@@ -74,6 +76,9 @@ def Train_Transform(input_size:int=224,
     t.append(transforms.RandomCrop(input_size, padding=0)), 
     t.append(transforms.ToTensor())
     t.append(transforms.Lambda(Gray_to_RGB_Transform)) #t.append(transforms.Grayscale(num_output_channels=3))
+    t.append(transforms.RandomRotation(10))
+    t.append(transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)))
+    t.append(transforms.ColorJitter(brightness=0.1, contrast=0.1))
 
     #t.append(transforms.RandomResizedCrop(input_size, scale=(0.8, 1.0)))
     #t.append(transforms.GaussianBlur(kernel_size=23, sigma=(0.1, 2.0)))
@@ -101,7 +106,7 @@ def Test_Transform(input_size:int=224,
   
 def Build_Datasets(data_path:str,
                    input_size:int=224, 
-                   args=None) -> (Dataset, Dataset):
+                   args=None) -> Union[Dataset, Dataset]:
     """This function returns the training, validation datasets.
     If there is no 'val' folder in the data path, then we need to split the training set into training and validation sets.
     In this case the training-validation split is an argument of the program and it is performs a 80-20 split (by default).
@@ -124,23 +129,29 @@ def Build_Datasets(data_path:str,
     if 'train' not in root_dict:
         ValueError('No "train" folder found in the data path. Make sure the data path has a "train" folder.')
         
-    if 'test' in root_dict:
+    if 'val' in root_dict:
+        train_val_splt = False
+        train_path = os.path.join(root, 'train'); val_path = os.path.join(root, 'val')
+    elif args.test_val_flag:
+        print('Alert: A "test" folder was found, but no "val" folder found in the data path. Using the "test" folder as the validation folder.')
         train_val_splt = False
         train_path = os.path.join(root, 'train'); val_path = os.path.join(root, 'test')
-    # else:
-    #     print('Alert: No "val" folder found in the data path. Train-validation split will be performed.')
-    #     train_val_splt = True
-    #     train_path = os.path.join(root, 'train'); val_path = os.path.join(root, 'train')
+    else:
+        print('Alert: No "val" folder found in the data path. Train-validation split will be performed.')
+        train_val_splt = True
+        train_path = os.path.join(root, 'train'); val_path = os.path.join(root, 'train')
 
     # Build the Transform pipelines
     train_transform = Train_Transform(input_size=input_size, args=args)
     val_transform = Test_Transform(input_size=input_size, args=args)
     
     # Build the datasets
-    #train_set = ImageFolder(root=train_path, transform=train_transform, loader=Gray_PIL_Loader_Wo_He)
-    #val_set = ImageFolder(root=val_path, transform=val_transform, loader=Gray_PIL_Loader_Wo_He)
-    train_set = ImageFolder(root=train_path, transform=train_transform, loader=Gray_PIL_Loader)
-    val_set = ImageFolder(root=val_path, transform=val_transform, loader=Gray_PIL_Loader)
+    if args.loader=='Gray_PIL_Loader_Wo_He':
+        train_set = ImageFolder(root=train_path, transform=train_transform, loader=Gray_PIL_Loader_Wo_He)
+        val_set = ImageFolder(root=val_path, transform=val_transform, loader=Gray_PIL_Loader_Wo_He)
+    else:
+        train_set = ImageFolder(root=train_path, transform=train_transform, loader=Gray_PIL_Loader)
+        val_set = ImageFolder(root=val_path, transform=val_transform, loader=Gray_PIL_Loader)
     
     # Assert that the number of classes
     args.nb_classes = len(train_set.classes)

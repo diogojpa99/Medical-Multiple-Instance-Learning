@@ -85,7 +85,7 @@ class EarlyStopping:
             self.best_score = score
             self.save_checkpoint(val_loss, model)
             
-        elif score < self.best_score + self.delta:
+        elif score < self.best_score - self.delta:
             # If we don't have an improvement, increase the counter 
             self.counter += 1
             #self.trace_func(f'\tEarlyStopping counter: {self.counter} out of {self.patience}')
@@ -106,22 +106,21 @@ class EarlyStopping:
         #torch.save(model.state_dict(), self.path)
         self.val_loss_min = val_loss
 
-def train_patch_extractor(model: torch.nn.Module, 
-                          current_epoch: int, 
-                          warmup_epochs: int, 
-                          flag: bool, 
-                          args
-):    
+def Classifier_Warmup(model: torch.nn.Module, 
+                      current_epoch: int, 
+                      warmup_epochs: int, 
+                      args):    
     """ Function to train the patch extractor for the first warmup_epochs epochs.
     Returns:
         bool: flag that defines if the patch extractor is trainable or not.
     """
-    if current_epoch < warmup_epochs:
+    if current_epoch==0 and warmup_epochs>0:
+        print(f"[Info] - Warmup phase: Only the head is trainable.")
         for param in model.patch_extractor.parameters():
             param.requires_grad = False
-        flag = True
         
-    elif current_epoch >= warmup_epochs:
+    elif current_epoch == warmup_epochs:
+        print(f"[Info] - Finetune phase: All parameters are trainable.")
         for param in model.patch_extractor.parameters():
             param.requires_grad = True
             
@@ -131,10 +130,6 @@ def train_patch_extractor(model: torch.nn.Module,
                     param.requires_grad = False
                     break 
                 
-        flag = False
-        
-    return flag
-
 def Class_Weighting(train_set:torch.utils.data.Dataset, 
                     val_set:torch.utils.data.Dataset, 
                     device:str='cuda:0', 

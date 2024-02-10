@@ -1,7 +1,8 @@
 import Breast_Scripts.data_setup as breast_data_setup
 import Skin_Scripts.data_setup as skin_data_setup
 
-datasets=['ISIC2019-Clean', 'PH2', 'Derm7pt', 'DDSM+CBIS+MIAS_CLAHE-Binary', 'DDSM+CBIS+MIAS_CLAHE', 'INbreast']
+datasets=['ISIC2019-Clean', 'PH2', 'Derm7pt','DDSM+CBIS+MIAS_CLAHE-Binary-Mass_vs_Normal', 
+          'DDSM+CBIS+MIAS_CLAHE-Binary-Benign_vs_Malignant', 'DDSM+CBIS+MIAS_CLAHE', 'DDSM+CBIS+MIAS_CLAHE-v2', 'INbreast']
 
 def Build_Dataset(data_path, input_size, args):
     
