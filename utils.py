@@ -186,6 +186,7 @@ def Load_Pretrained_FeatureExtractor(path, model, args):
         raise RuntimeError("No shared keys between checkpoint and model.")
 
     # Load the pre-trained weights into the model
+    print(f"[INFO] - Loading pretrained weights from {path}")
     model.load_state_dict(checkpoint, strict=False)
     
 def Load_Pretrained_ViT_Interpolate_Pos_Embed(model, checkpoint_model):
@@ -307,3 +308,39 @@ def _load_checkpoint_for_ema(model_ema, checkpoint):
     torch.save(checkpoint, mem_file)
     mem_file.seek(0)
     model_ema._load_checkpoint(mem_file)
+    
+class GradientStatsTracker:
+    def __init__(self, classifier_layer_names, warmup_epochs=0):
+        self.classifier_layer_names = classifier_layer_names
+        self.warmup_epochs = warmup_epochs
+        self.reset_stats()
+
+    def reset_stats(self):
+        self.stats = {
+            'classifier': {'max_grads': [], 'std_grads': [], 'percentile_90_grads': [], 'epoch_max_grad': float('-inf'), 'epoch_min_grad': float('inf')},
+            'patch_extractor': {'max_grads': [], 'std_grads': [], 'percentile_90_grads': [], 'epoch_max_grad': float('-inf'), 'epoch_min_grad': float('inf')}
+        }
+
+    def update_stats(self, model):
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                grads = param.grad.view(-1).abs().cpu().numpy()
+                key = 'classifier' if any(cl_name in name for cl_name in self.classifier_layer_names) else 'patch_extractor'
+                self.stats[key]['max_grads'].append(np.max(grads))
+                self.stats[key]['std_grads'].append(np.std(grads))
+                self.stats[key]['percentile_90_grads'].append(np.percentile(grads, 90))
+                self.stats[key]['epoch_max_grad'] = max(self.stats[key]['epoch_max_grad'], np.max(grads))
+                self.stats[key]['epoch_min_grad'] = min(self.stats[key]['epoch_min_grad'], np.min(grads))
+
+    def print_epoch_stats(self, epoch):
+        for part in self.stats:
+            if epoch <= self.warmup_epochs and part == 'patch_extractor':
+                continue
+            max_grad = np.mean(self.stats[part]['max_grads'])
+            std_grad = np.mean(self.stats[part]['std_grads'])
+            percentile_90 = np.mean(self.stats[part]['percentile_90_grads'])
+            epoch_max_grad = self.stats[part]['epoch_max_grad']
+            epoch_min_grad = self.stats[part]['epoch_min_grad']
+            print(f"\t[INFO] - {part.capitalize()} Gradient Statistics: Mean Max Abs Gradient: {max_grad:.6f} | Mean Std Deviation: {std_grad:.6f} | Mean 90th Percentile: {percentile_90:.6f} | Epoch Max Gradient: {epoch_max_grad:.6f} | Epoch Min Gradient: {epoch_min_grad:.6f}")
+            self.stats[part]['epoch_max_grad'] = float('-inf')
+            self.stats[part]['epoch_min_grad'] = float('inf')

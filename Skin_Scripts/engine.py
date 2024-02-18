@@ -21,6 +21,7 @@ def train_step(model: torch.nn.Module,
                lr_scheduler=None,
                wandb=print,
                model_ema: Optional[ModelEma] = None,
+               gradient_tracker=None,
                args = None):
         
     # Put model in train mode

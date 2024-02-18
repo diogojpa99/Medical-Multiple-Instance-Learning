@@ -11,7 +11,8 @@ from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score, accuracy_score, \
     balanced_accuracy_score
     
-
+import utils
+    
 def train_step(model: torch.nn.Module, 
                 dataloader: torch.utils.data.DataLoader, 
                 criterion: torch.nn.Module, 
@@ -23,6 +24,7 @@ def train_step(model: torch.nn.Module,
                 lr_scheduler=None,
                 wandb=print,
                 model_ema: Optional[ModelEma] = None,
+                gradient_tracker=None,
                 args = None):
         
     # Put model in train mode
@@ -56,6 +58,9 @@ def train_step(model: torch.nn.Module,
         else:
             loss.backward() # 3. Backward pass
             optimizer.step() # 5. Update weights
+            
+        if args.print_grad_stats:
+            gradient_tracker.update_stats(model)
 
         # Update LR Scheduler
         if not args.cosine_one_cycle:
@@ -73,6 +78,10 @@ def train_step(model: torch.nn.Module,
         
         preds.append(predictions.cpu().numpy()); targs.append(target.cpu().numpy())
         
+    if args.print_grad_stats:
+        gradient_tracker.print_epoch_stats(epoch)
+        gradient_tracker.reset_stats()  
+            
     # Adjust metrics to get average loss and accuracy per batch 
     train_loss = train_loss / len(dataloader); train_acc = train_acc / len(dataloader)
 

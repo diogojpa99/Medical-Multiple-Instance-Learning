@@ -76,9 +76,11 @@ def Train_Transform(input_size:int=224,
     t.append(transforms.RandomCrop(input_size, padding=0)), 
     t.append(transforms.ToTensor())
     t.append(transforms.Lambda(Gray_to_RGB_Transform)) #t.append(transforms.Grayscale(num_output_channels=3))
-    t.append(transforms.RandomRotation(10))
-    t.append(transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)))
-    t.append(transforms.ColorJitter(brightness=0.1, contrast=0.1))
+    #t.append(transforms.RandomRotation(10))
+    
+    if args.breast_strong_aug:
+        t.append(transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)))
+        t.append(transforms.ColorJitter(brightness=0.1, contrast=0.1))
 
     #t.append(transforms.RandomResizedCrop(input_size, scale=(0.8, 1.0)))
     #t.append(transforms.GaussianBlur(kernel_size=23, sigma=(0.1, 2.0)))

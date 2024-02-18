@@ -133,7 +133,7 @@ def Build_Dataset(is_train, data_path, args):
     
     img_root = os.path.join(data_path, 'train' if is_train else 'val')
             
-    if args.batch_aug:
+    if args.skin_batch_aug:
         img_transform = Build_Transform(is_train, args)
     else:
         img_transform = transforms.Compose([   

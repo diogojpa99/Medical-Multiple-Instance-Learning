@@ -12,8 +12,8 @@ from sklearn.utils.class_weight import compute_class_weight
     
 import mil
 
-import Breast_Scripts.engine as breast_engine
-import Skin_Scripts.engine as skin_engine
+import breast_scripts.engine as breast_engine
+import skin_scripts.engine as skin_engine
 
 def train_step(model: torch.nn.Module, 
                dataloader: torch.utils.data.DataLoader, 
@@ -26,12 +26,13 @@ def train_step(model: torch.nn.Module,
                lr_scheduler=None,
                wandb=print,
                model_ema: Optional[ModelEma] = None,
+               gradient_tracker=None,
                args = None):
     
     if args.dataset_type == 'Skin':
-        return skin_engine.train_step(model, dataloader, criterion, optimizer, device, epoch, loss_scaler, max_norm, lr_scheduler, wandb, model_ema, args)
+        return skin_engine.train_step(model, dataloader, criterion, optimizer, device, epoch, loss_scaler, max_norm, lr_scheduler, wandb, model_ema, gradient_tracker, args)
     elif args.dataset_type == 'Breast':
-        return breast_engine.train_step(model, dataloader, criterion, optimizer, device, epoch, loss_scaler, max_norm, lr_scheduler, wandb, model_ema, args)
+        return breast_engine.train_step(model, dataloader, criterion, optimizer, device, epoch, loss_scaler, max_norm, lr_scheduler, wandb, model_ema,gradient_tracker, args)
     else:
         raise ValueError(f"Dataset {args.dataset_type} not supported for training.")
     
@@ -115,12 +116,12 @@ def Classifier_Warmup(model: torch.nn.Module,
         bool: flag that defines if the patch extractor is trainable or not.
     """
     if current_epoch==0 and warmup_epochs>0:
-        print(f"[Info] - Warmup phase: Only the head is trainable.")
+        print(f"[INFO] - Warmup phase: Only the head is trainable.")
         for param in model.patch_extractor.parameters():
             param.requires_grad = False
         
     elif current_epoch == warmup_epochs:
-        print(f"[Info] - Finetune phase: All parameters are trainable.")
+        print(f"[INFO] - Finetune phase: All parameters are trainable.")
         for param in model.patch_extractor.parameters():
             param.requires_grad = True
             

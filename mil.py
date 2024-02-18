@@ -27,7 +27,7 @@ class MlpCLassifier(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(in_features=in_features, out_features=out_features)
         )
-    
+        
     def forward(self, x):
         """ 
         Forward pass of the MlpClassifier model.
@@ -39,14 +39,33 @@ class MlpCLassifier(nn.Module):
         if self.drop:
             x = F.dropout(x, p=self.drop, training=self.training)
         return self.mlp(x)
-
+    
+class head(nn.Module):
+    
+    def __init__(self, in_features, out_features, dropout=0.0):
+        super(head, self).__init__()
+        
+        self.drop = nn.Dropout(p=dropout)
+        self.classifier = nn.Linear(in_features=in_features, out_features=out_features)
+                
+    def forward(self, x):
+        """ 
+        Forward pass of the MlpClassifier model.
+            Input: x (Batch_size, in_features)
+            Ouput: x (Batch_size, out_features)
+        Note: Dropout layer was done this so the architecture can be saved and loaded without errors if
+        the user uses or not dropout.  
+        """
+        x = self.drop(x)
+        return self.classifier(x)
+    
 class MIL(nn.Module):
     
     def __init__(self, 
                 num_classes: int = 2,
                 N: int = 196, 
                 embedding_size: int = 256, 
-                dropout: float = 0.1,
+                dropout: float = 0.0,
                 pooling_type: str = "max",
                 is_training: bool = True,
                 patch_extractor_model: str = "resnet18.tv_in1k",
@@ -65,11 +84,15 @@ class MIL(nn.Module):
         self.is_training = is_training
         self.patch_extractor_model = patch_extractor_model
         self.patch_extractor = patch_extractor  
-        self.deep_classifier = MlpCLassifier(in_features=embedding_size, out_features=num_classes, dropout=dropout)   
         self.evit_attn_tokens_idx = None 
         self.evit_inattn_tokens_idx = None
         self.count_tokens = 0
-    
+        
+        if args.dataset_type == 'Skin':
+            self.classifier = MlpCLassifier(in_features=embedding_size, out_features=num_classes, dropout=dropout) 
+        elif args.dataset_type == 'Breast':
+            self.classifier = head(in_features=embedding_size, out_features=num_classes, dropout=dropout)  
+                
     def activations_hook(self, grad):
         self.gradients = grad
         
@@ -429,7 +452,7 @@ class EmbeddingMIL(MIL):
         x = self.MilPooling(x, mask)
         
         # (3) Apply a Mlp to obtain the bag label: (Batch_size, embedding_size) -> (Batch_size, num_classes)
-        x = self.deep_classifier(x)
+        x = self.classifier(x)
         
         # (4) Apply log to softmax values -> Using NLLLoss criterion
         x = self.LogSoftmax(x)
@@ -470,7 +493,7 @@ class InstanceMIL(MIL):
         x = x.reshape(-1, x.size(2)) # Transform input: (Batch_size*N, embedding_size)
 
         # (2) Use a deep classifier to obtain the score for each instance: (Batch_size*N, embedding_size) -> (Batch_size*N, num_classes)
-        x = self.deep_classifier(x) 
+        x = self.classifier(x) 
         x = x.view(-1, self.num_patches, self.num_classes) # Transform x to: (Batch_size, N, num_classes)
         
         self.save_patch_probs(torch.softmax(x, dim=2)) # Save the softmax probabilities of the patches (instances)
@@ -548,6 +571,7 @@ def Define_Feature_Extractor(feature_extractor:str,
                           pos_drop_rate=args.pos_drop_rate,
                           attn_drop_rate=args.attn_drop_rate,
                           drop_path_rate=args.drop_layers_rate,
+                          drop_block_rate=args.drop_block_rate,
                           feature_extractor=True,
                           pos_embedding = args.pos_encoding_flag)
     elif args.feature_extractor == 'deit_base_patch16_224':
@@ -561,6 +585,7 @@ def Define_Feature_Extractor(feature_extractor:str,
                           pos_drop_rate=args.pos_drop_rate,
                           attn_drop_rate=args.attn_drop_rate,
                           drop_path_rate=args.drop_layers_rate,
+                          drop_block_rate=args.drop_block_rate,                          
                           feature_extractor=True,
                           pos_embedding = args.pos_encoding_flag)
     elif args.feature_extractor == 'deit_small_patch16_shrink_base':
@@ -572,7 +597,7 @@ def Define_Feature_Extractor(feature_extractor:str,
                           pos_drop_rate=args.pos_drop_rate,
                           attn_drop_rate=args.attn_drop_rate,
                           drop_path_rate=args.drop_layers_rate,
-                          drop_block_rate=None,
+                          drop_block_rate=args.drop_block_rate,
                           fuse_token=args.fuse_token,
                           img_size=(args.input_size, args.input_size),
                           feature_extractor=True,
