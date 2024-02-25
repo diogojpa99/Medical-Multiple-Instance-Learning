@@ -26,7 +26,7 @@ from sklearn.exceptions import UndefinedMetricWarning
 from typing import List, Union
 
 import os
-#os.environ["WANDB_MODE"] = "offline"
+os.environ["WANDB_MODE"] = "offline"
 
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
@@ -273,7 +273,7 @@ def main(args):
     if args.wandb_flag:
         wandb.init(
             project=args.project_name,
-            #mode="offline",
+            mode="offline",
             config={
             "Feature Extractor model": args.feature_extractor,
             "Feature Extractor dataset": args.feature_extractor_pretrained_dataset,

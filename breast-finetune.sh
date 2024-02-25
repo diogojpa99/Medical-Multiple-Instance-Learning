@@ -13,7 +13,7 @@ epoch=90
 lr=2e-4
 min_lr=2e-6
 warmup_lr=1e-6
-patience=30
+patience=80
 delta=0.0
 sched='cosine'
 opt='adamw'
@@ -23,7 +23,7 @@ drop_block_rate=None
 max_norm_grad=10.0
 weight_decay=1e-6
 
-feature_extractor=('resnet18.tv_in1k' 'resnet50.tv_in1k' 'vgg16.tv_in1k' 'densenet169.tv_in1k' 'efficientnet_b3' 'deit_small_patch16_224'  'deit_base_patch16_224')
+feature_extractor=('deit_small_patch16_shrink_base')
 
 for feat in "${feature_extractor[@]}"
 do
@@ -38,6 +38,8 @@ do
     
                     now=$(date +"%Y%m%d_%H%M%S")
                     logdir="MIL-Finetune-$dataset_type-$dataset_name-$feat-$mil_t-$pool-drop_$dropout-drop_layer_$drop_path-Date_$now"
+                    log_file="Finetuned_Models/Binary/$dataset_name/$logdir/run_log.txt"
+                    mkdir -p "$(dirname "$log_file")" 
                     echo "----------------- Starting Program: $logdir --------------------"
         
                     python main.py \
@@ -74,9 +76,9 @@ do
                     --test_val_flag \
                     --dataset $dataset_name \
                     --dataset_type $dataset_type \
-                    --output_dir "Finetuned_Models/Binary/$dataset_name/$logdir"
+                    --output_dir "Finetuned_Models/Binary/$dataset_name/$logdir" >> "$log_file" 2>&1
                     
-                    echo "Output dir for the last experiment: $logdir"
+                    echo "Output dir for the last experiment: $logdir" 
                 done
             done
         done
@@ -94,21 +96,21 @@ pooling_types=('max' 'topk' 'avg')
 
 batch=256
 n_classes=2
-epoch=90
+epoch=140
 lr=2e-4
 min_lr=2e-6
 warmup_lr=1e-6
-patience=30
+patience=100
 delta=0.0
 sched='cosine'
 opt='adamw'
-drops=(0.2)
+drops=(0.1)
 drops_layers_rate=(0.0)
 drop_block_rate=None
 max_norm_grad=10.0
 weight_decay=1e-6
 
-feature_extractor=('resnet18.tv_in1k' 'resnet50.tv_in1k' 'vgg16.tv_in1k' 'densenet169.tv_in1k' 'efficientnet_b3' 'deit_small_patch16_224'  'deit_base_patch16_224')
+feature_extractor=('resnet18.tv_in1k' 'resnet50.tv_in1k' 'vgg16.tv_in1k' 'densenet169.tv_in1k' 'efficientnet_b3' 'deit_small_patch16_224' 'deit_small_patch16_shrink_base' 'deit_base_patch16_224')
 
 for feat in "${feature_extractor[@]}"
 do
@@ -123,6 +125,8 @@ do
     
                     now=$(date +"%Y%m%d_%H%M%S")
                     logdir="MIL-Finetune-$dataset_type-$dataset_name-$feat-$mil_t-$pool-drop_$dropout-drop_layer_$drop_path-Date_$now"
+                    log_file="Finetuned_Models/Binary/$dataset_name/$logdir/run_log.txt"
+                    mkdir -p "$(dirname "$log_file")" 
                     echo "----------------- Starting Program: $logdir --------------------"
         
                     python main.py \
@@ -159,7 +163,7 @@ do
                     --test_val_flag \
                     --dataset $dataset_name \
                     --dataset_type $dataset_type \
-                    --output_dir "Finetuned_Models/Binary/$dataset_name/$logdir"
+                    --output_dir "Finetuned_Models/Binary/$dataset_name/$logdir" >> "$log_file" 2>&1
                     
                     echo "Output dir for the last experiment: $logdir"
                 done
