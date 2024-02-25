@@ -47,27 +47,51 @@ The model allows visualization of the different pooling functions: max, avg, and
 
 The MIL model is designed to process dermoscopic RGB images and greyscale mammography images, supporting publicly available datasets such as ISIC2019, PH2, Derm7pt, DDSM, an others. 
 
-## Usage
 
-This branch is only a component of a more extensive medical model and is structured to be used in conjunction with other branches, like the EViT branch, for comprehensive analysis.
+## Usage
 
 To use this MIL model branch in your pipeline, follow these steps:
 
-1. Install the required dependencies by running:
+1. **Clone the Repository**
+    - Clone this repository to your local machine to get started.
+    ```bash
+    git clone <repository-url>
+    ```
 
-```bash
-pip install -r requirements.txt
-```
+2. **Set Up the Environment**
+    - Follow the installation instructions to set up the necessary environment and dependencies.
+        
+        ```bash
+        pip install -r requirements.txt
+        ```
 
-<!-- TODO: Add the correct paths for the images in the markdown links below -->
+3. **Operational Modes**
+    - Medical EViT supports various modes of operation, catering to different stages of model usage and analysis:
 
-2. After the dependencies are installed, you can begin training the model with the provided script:
-```bash
-bash train.sh
-```
+        **Training**
+        - To train the model from scratch on your dataset.
+        ```bash
+        python main.py --mode train --dataset <your-dataset>
+        ```
 
-Ensure you have the proper environment and permissions to execute the script on your system.
+        **Fine-Tuning**
+        - To fine-tune the pre-trained model on a specific dataset.
+        ```bash
+        python main.py --mode finetune --pretrained <path-to-pretrained-model> --dataset <your-dataset>
+        ```
 
+        **Testing**
+        - To evaluate the model's performance on a test dataset.
+        ```bash
+        python main.py --mode test --checkpoint <path-to-model-checkpoint> --dataset <test-dataset>
+        ```
 
+        **Visualizing Heat Maps**
+        - To visualize the patches that the MIL model identified as the most relevant, highlighting how the model focuses on different parts of the image.
+        ```bash
+        python main.py --mode visualize --checkpoint <path-to-model-checkpoint> --dataset <visualization-dataset>
+        ```
+
+    Replace `<repository-url>`, `<your-dataset>`, `<path-to-pretrained-model>`, `<path-to-model-checkpoint>`, and `<visualization-dataset>` with the actual values relevant to your project.
 
 For a detailed understanding of the MIL branch and its role in the larger context, please refer to the extended abstract and paper associated with this repository.
