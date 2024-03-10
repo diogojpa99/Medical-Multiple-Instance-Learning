@@ -55,7 +55,8 @@ def get_args_parser():
                                  'MIAS_CLAHE', 'MIAS_CLAHE-Mass_vs_Normal', 'MIAS_CLAHE-Benign_vs_Malignant',
                                  'DDSM', 'DDSM-Mass_vs_Normal', 'DDSM-Benign_vs_Malignant', 
                                  'DDSM+CBIS-Mass_vs_Normal',
-                                 'CBIS', 'CBIS-Processed_CLAHE'], metavar='DATASET')
+                                 'CBIS', 'CBIS-Processed_CLAHE',
+                                 'CMMD-only_mass-processed_crop_CLAHE', 'CMMD-only_mass'], metavar='DATASET')
     parser.add_argument('--dataset_type', default='Skin', type=str, choices=['Breast', 'Skin'], metavar='DATASET')
     
     # Wanb parameters

@@ -12,3 +12,4 @@ seaborn==0.12.2
 scikit-learn==1.2.2
 opencv-python==4.7.0.68
 scikit-image==0.19.3
+pydicom==2.4.4
