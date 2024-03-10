@@ -45,9 +45,9 @@ def train_step(model: torch.nn.Module,
         # 1. Clear gradients
         optimizer.zero_grad()
 
-        #with torch.cuda.amp.autocast():
-        bag_prob = model(input, None) # 2.Forward pass
-        loss = criterion(bag_prob, target) # 3. Compute and accumulate loss
+        with torch.cuda.amp.autocast():
+            bag_prob = model(input, None) # 2.Forward pass
+            loss = criterion(bag_prob, target) # 3. Compute and accumulate loss
         
         train_loss += loss.item() 
         
@@ -63,7 +63,7 @@ def train_step(model: torch.nn.Module,
             gradient_tracker.update_stats(model)
 
         # Update LR Scheduler
-        if not args.cosine_one_cycle:
+        if not args.cosine_one_cycle and lr_scheduler is not None:
             lr_scheduler.step_update(num_updates=lr_num_updates)
             
         # Update Model Ema

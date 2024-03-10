@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import random
 import PIL
-from skimage import measure
+#from skimage import measure
 
 import torch
 import torchvision.transforms as transforms
@@ -78,7 +78,10 @@ def Show_Mask_Border(mask:torch.Tensor,
     #contours,_ = cv2.findContours((mask * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     #cv2.drawContours(overlay, contours, -1, color, thickness=2)  
     
-    contours = measure.find_contours(mask, 0.5, fully_connected='low')
+    # REMOVE COMENT
+    #contours = measure.find_contours(mask, 0.5, fully_connected='low')
+    contours = None
+    
 
     for contour in contours:
         for i in range(len(contour) - 1):

@@ -5,7 +5,8 @@ datasets=['ISIC2019-Clean', 'PH2', 'Derm7pt','DDSM+CBIS+MIAS_CLAHE-Binary-Mass_v
           'DDSM+CBIS+MIAS_CLAHE-Binary-Benign_vs_Malignant', 'DDSM+CBIS+MIAS_CLAHE', 'DDSM+CBIS+MIAS_CLAHE-v2', 'INbreast',
           'MIAS_CLAHE', 'MIAS_CLAHE-Mass_vs_Normal', 'MIAS_CLAHE-Benign_vs_Malignant',
           'DDSM', 'DDSM-Mass_vs_Normal', 'DDSM-Benign_vs_Malignant', 
-          'DDSM+CBIS-Mass_vs_Normal']
+          'DDSM+CBIS-Mass_vs_Normal',
+          'CBIS', 'CBIS-Processed_CLAHE']
 
 def Build_Dataset(data_path, input_size, args):
     

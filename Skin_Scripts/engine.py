@@ -57,7 +57,7 @@ def train_step(model: torch.nn.Module,
             optimizer.step() # 5. Update weights
 
         # Update LR Scheduler
-        if not args.cosine_one_cycle:
+        if not args.cosine_one_cycle and lr_scheduler is not None:
             lr_scheduler.step_update(num_updates=lr_num_updates)
             
         # Update Model Ema

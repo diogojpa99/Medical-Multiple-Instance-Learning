@@ -26,6 +26,7 @@ from sklearn.exceptions import UndefinedMetricWarning
 from typing import List, Union
 
 import os
+import gc
 os.environ["WANDB_MODE"] = "offline"
 
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -53,7 +54,8 @@ def get_args_parser():
                                  'DDSM+CBIS+MIAS_CLAHE-v2', 'INbreast', 
                                  'MIAS_CLAHE', 'MIAS_CLAHE-Mass_vs_Normal', 'MIAS_CLAHE-Benign_vs_Malignant',
                                  'DDSM', 'DDSM-Mass_vs_Normal', 'DDSM-Benign_vs_Malignant', 
-                                 'DDSM+CBIS-Mass_vs_Normal'], metavar='DATASET')
+                                 'DDSM+CBIS-Mass_vs_Normal',
+                                 'CBIS', 'CBIS-Processed_CLAHE'], metavar='DATASET')
     parser.add_argument('--dataset_type', default='Skin', type=str, choices=['Breast', 'Skin'], metavar='DATASET')
     
     # Wanb parameters
@@ -109,7 +111,7 @@ def get_args_parser():
                         help="Class weights for loss function.")
     
     # Optimizer parameters 
-    parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER', choices=['adamw', 'sgd'],
+    parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER', choices=['adamw', 'adam', 'sgd'],
                         help='Optimizer (default: "adamw")')
     
     parser.add_argument('--opt-eps', default=1e-8, type=float, metavar='EPSILON',
@@ -126,8 +128,7 @@ def get_args_parser():
                         help='weight decay (default: 0.05)')
     
     # Learning rate schedule parameters 
-    parser.add_argument('--lr_scheduler', action='store_true', default=False)
-    parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER', choices=['step', 'multistep', 'cosine', 'plateau','poly', 'exp'],
+    parser.add_argument('--sched', default=None, type=str, metavar='SCHEDULER', choices=['step', 'multistep', 'cosine', 'plateau','poly', 'exp'],
                         help='LR scheduler (default: "cosine"')
     parser.add_argument('--lr', type=float, default=5e-3, metavar='LR',
                         help='learning rate (default: 1e-3)')
@@ -294,8 +295,8 @@ def main(args):
         )
         wandb.run.name = args.run_name
         
-    # if args.debug:
-    #    wandb=print
+    if args.debug:
+       wandb=print
     
     if args.train or args.finetune: 
         print("----------------- Args -------------------")
@@ -326,16 +327,14 @@ def main(args):
         sampler_val = torch.utils.data.SequentialSampler(val_set)
         
         data_loader_train = torch.utils.data.DataLoader(
-            train_set, 
-            sampler=sampler_train if args.dataset_type == 'Skin' else None,
+            train_set, sampler=sampler_train,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             pin_memory=(torch.cuda.is_available()),
             drop_last=True,
         )
         data_loader_val = torch.utils.data.DataLoader(
-            val_set, 
-            sampler=sampler_val if args.dataset_type == 'Skin' else None,
+            val_set, sampler=sampler_val,
             batch_size=int(1.5 * args.batch_size),
             num_workers=args.num_workers,
             pin_memory=(torch.cuda.is_available()),
@@ -348,7 +347,7 @@ def main(args):
     feature_extractor.to(device)
     args.pretrained_feature_extractor_path = mil.Pretrained_Feature_Extractures(args.feature_extractor, args)
     if args.finetune and args.pretrained_feature_extractor_path:
-            utils.Load_Pretrained_FeatureExtractor(args.pretrained_feature_extractor_path, feature_extractor, args)
+        utils.Load_Pretrained_FeatureExtractor(args.pretrained_feature_extractor_path, feature_extractor, args)
             
     ############################ Define the MIL Model ############################
     
@@ -401,11 +400,10 @@ def main(args):
         loss_scaler = NativeScaler() if args.loss_scaler else None
 
         # (3) Create scheduler
-        if args.lr_scheduler:
-            if args.sched == 'exp':
-                lr_scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.decay_rate)
-            else:    
-                lr_scheduler,_ = create_scheduler(args, optimizer)
+        if args.sched == 'exp':
+            lr_scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.decay_rate)
+        else:    
+            lr_scheduler,_ = create_scheduler(args, optimizer)
         
         # (4) Define the loss function with class weighting
         #criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
@@ -489,7 +487,7 @@ def main(args):
                                             gradient_tracker=gradient_stats_tracker,
                                             args=args)
         
-            if args.lr_scheduler:
+            if lr_scheduler is not None:
                 lr_scheduler.step(epoch+1)
 
             results = engine.evaluation(model=model,
@@ -506,8 +504,9 @@ def main(args):
             val_results['cf_matrix'].append(results['confusion_matrix']); val_results['precision'].append(results['precision'])
             val_results['recall'].append(results['recall']); val_results['bacc'].append(results['bacc'])
             
-            print(f"Epoch: {epoch+1} | lr: {train_stats['train_lr']:.5f} | Train Loss: {train_stats['train_loss']:.4f} | Train Acc: {train_stats['train_acc']:.4f} |",
-                  f"Val. Loss: {results['loss']:.4f} | Val. Acc: {results['acc1']:.4f} | Val. Bacc: {results['bacc']:.4f} | F1-score: {np.mean(results['f1_score']):.4f}")
+            if epoch % 10 == 0:
+                print(f"Epoch: {epoch+1} | lr: {train_stats['train_lr']:.5f} | Train Loss: {train_stats['train_loss']:.4f} | Train Acc: {train_stats['train_acc']:.4f} |",
+                    f"Val. Loss: {results['loss']:.4f} | Val. Acc: {results['acc1']:.4f} | Val. Bacc: {results['bacc']:.4f} | F1-score: {np.mean(results['f1_score']):.4f}") 
                             
             if results['bacc'] > best_val_bacc and early_stopping.counter < args.counter_saver_threshold:
                 # Only want to save the best checkpoints if the best val bacc and the early stopping counter is less than the threshold
@@ -521,12 +520,12 @@ def main(args):
                         'epoch': epoch,
                         'args': args,
                     }
-                    if args.lr_scheduler:
+                    if args.sched is not None:
                         checkpoint_dict['lr_scheduler'] = lr_scheduler.state_dict()
                     if model_ema is not None:
                         checkpoint_dict['model_ema'] = get_state_dict(model_ema)
                     utils.save_on_master(checkpoint_dict, checkpoint_path)
-                print(f"\tBest Val. Bacc: {(best_val_bacc*100):.2f}% |[INFO] Saving model as 'best_checkpoint.pth'")
+                print(f"\tBest Val. Bacc: {(best_val_bacc*100):.2f}% | [INFO] Saving model as 'best_checkpoint.pth'")
                         
             # Early stopping
             early_stopping(results['loss'], model)
@@ -562,7 +561,11 @@ def main(args):
     if wandb!=print:
         wandb.log({"Best Val. Acc": best_results['acc1'], "Best Val. Bacc": best_results['bacc'], "Best Val. F1-score": np.mean(best_results['f1_score'])})
         wandb.log({"Training time": total_time_str})
-        #wandb.finish()
+        wandb.finish()
+        
+    # Clean up
+    gc.collect()
+    torch.cuda.empty_cache()
     
     return
 

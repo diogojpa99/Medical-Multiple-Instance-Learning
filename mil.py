@@ -45,7 +45,7 @@ class head(nn.Module):
     def __init__(self, in_features, out_features, dropout=0.0):
         super(head, self).__init__()
         
-        self.drop = nn.Dropout(p=dropout)
+        self.drop = nn.Dropout(p=dropout, inplace=True)
         self.classifier = nn.Linear(in_features=in_features, out_features=out_features)
                 
     def forward(self, x):
@@ -58,7 +58,266 @@ class head(nn.Module):
         """
         x = self.drop(x)
         return self.classifier(x)
+
+def define_mil_classifier(dataset_type:str, 
+                          in_features:int, 
+                          out_features:int, 
+                          drop) -> nn.Module:
+    """ This function defines the MIL classifier.
+
+    Args:
+        dataset_type (str): Name of the dataset.
+        in_features (int): Number of input features.
+        out_features (int): Number of output features.
+        drop (_type_): Dropout rate.
+
+    Returns:
+        nn.Module: MIL classifier.
+    """
     
+    # TODO: This function needs to be deleted. We need to merge the two classes into one.
+    # This wasn't done before because the MIL model was implemented in two different ways.
+    # One for the breast dataset and another for the skin dataset... However the two models need to be merged.
+    
+    classifier = None
+    
+    if dataset_type == 'Skin':
+        classifier = MlpCLassifier(in_features, out_features, drop) 
+    elif dataset_type == 'Breast':
+        classifier = head(in_features, out_features, drop) 
+        
+    return classifier    
+    
+def count_tokens_maxpooling(self, pooled_idxs):
+    # Count the number of times the cls_token or the fuse_tokens are selected as the most probable patch.            
+    if self.patch_extractor_model in deits_backbones:
+        self.count_tokens=(pooled_idxs==0).sum().item()  # Count the number of times the cls token is selected as the most probable patch.
+    elif self.patch_extractor_model in evits_backbones:
+        if self.args.fuse_token_filled and self.args.fuse_token: 
+            _, evit_inattn_tokens_idx = self.get_evit_tokens_idx()
+            pooled_idxs_exp = pooled_idxs.unsqueeze(1).expand(-1, evit_inattn_tokens_idx.shape[1])
+            self.count_tokens = (evit_inattn_tokens_idx == pooled_idxs_exp).any(dim=1).sum().item()
+        if self.args.fuse_token and not self.args.fuse_token_filled:
+            self.count_tokens=(pooled_idxs==self.num_patches-1).sum().item() 
+            
+def count_tokens_topkpooling(self, pooled_idxs):   
+    # Count the number of times the cls_token or the fuse_tokens are selected as the most probable patch.            
+    if self.patch_extractor_model in deits_backbones:
+        self.count_tokens=torch.sum(pooled_idxs==0).item() # Count the number of times the cls token is selected as the most probable patch.
+    elif self.patch_extractor_model in evits_backbones:
+        if self.args.fuse_token_filled and self.args.fuse_token: 
+            _, evit_inattn_tokens_idx = self.get_evit_tokens_idx()
+            pooled_idxs_exp=pooled_idxs.unsqueeze(2).expand(-1, -1, evit_inattn_tokens_idx.shape[1])
+            self.count_tokens=(evit_inattn_tokens_idx.unsqueeze(1)==pooled_idxs_exp).any(dim=2).sum().item()
+        if self.args.fuse_token and not self.args.fuse_token_filled:
+            self.count_tokens=torch.sum(pooled_idxs==self.num_patches-1).item() # Count the number of times the fuse token is selected as the most probable patch.
+    
+def Define_Feature_Extractor(feature_extractor:str, 
+                             nb_classes:int,
+                             args) -> Union[nn.Module, int]:
+    """ This function defines the feature extractor model and returns the model.
+
+    Args:
+        feature_extractor (str): Name of the feature extractor model.
+        nb_classes (int): Number of classes.
+        args (_type_): Arguments.
+        
+    Raises:
+        NotImplementedError: If the model is not implemented.
+
+    Returns:
+        nn.Module: Feature extractor model.
+        int: Number of features.
+    """
+    
+    num_chs = 256
+    model_args = {}
+    
+    if args.feature_extractor == 'resnet18.tv_in1k':
+        """ feature_extractor = ResNet.ResNet(block=ResNet.BasicBlock, 
+                                          layers=[2, 2, 2], 
+                                          desired_output_size=(args.input_size // args.patch_size)) """            
+        model_args = dict(block=resnet.BasicBlock, 
+                          layers=[2, 2, 2], 
+                          desired_output_size=(args.input_size // args.patch_size),
+                          drop_rate=args.drop,
+                          drop_path_rate=args.drop_layers_rate,
+                          drop_block_rate=args.drop_block_rate,
+                          feature_extractor=True)
+    elif args.feature_extractor == 'resnet50.tv_in1k':
+        model_args = dict(block=resnet.Bottleneck, 
+                          layers=[3, 4, 6], 
+                          desired_output_size=(args.input_size // args.patch_size),
+                          drop_rate=args.drop,
+                          drop_path_rate=args.drop_layers_rate,
+                          drop_block_rate=args.drop_block_rate,
+                          feature_extractor=True)
+    elif args.feature_extractor == 'vgg16.tv_in1k': 
+        model_args = dict(cfg=[64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512],
+                          drop_rate=args.drop,
+                          feature_extractor=True)
+    elif args.feature_extractor == 'densenet169.tv_in1k':
+        model_args = dict(block_config=(6, 12, 32),
+                          drop_rate=args.drop,
+                          feature_extractor=True)
+    elif args.feature_extractor == 'efficientnet_b3':
+        model_args = dict(drop_rate=args.drop,  
+                          drop_path_rate=args.drop_layers_rate,
+                          feature_extractor=True,
+                          desired_output_size=(args.input_size // args.patch_size))
+    elif args.feature_extractor == 'deit_small_patch16_224':
+        num_chs = 384
+        model_args = dict(img_size=args.input_size,
+                          patch_size=args.patch_size,
+                          embed_dim=num_chs, 
+                          depth=12, 
+                          num_heads=6,
+                          drop_rate=args.drop,
+                          pos_drop_rate=args.pos_drop_rate,
+                          attn_drop_rate=args.attn_drop_rate,
+                          drop_path_rate=args.drop_layers_rate,
+                          drop_block_rate=args.drop_block_rate,
+                          feature_extractor=True,
+                          pos_embedding = args.pos_encoding_flag)
+    elif args.feature_extractor == 'deit_base_patch16_224':
+        num_chs = 768
+        model_args = dict(img_size=args.input_size,
+                          patch_size=args.patch_size,
+                          embed_dim=num_chs, 
+                          depth=12, 
+                          num_heads=12,
+                          drop_rate=args.drop,
+                          pos_drop_rate=args.pos_drop_rate,
+                          attn_drop_rate=args.attn_drop_rate,
+                          drop_path_rate=args.drop_layers_rate,
+                          drop_block_rate=args.drop_block_rate,                          
+                          feature_extractor=True,
+                          pos_embedding = args.pos_encoding_flag)
+    elif args.feature_extractor == 'deit_small_patch16_shrink_base':
+        num_chs = 384
+        model_args = dict(base_keep_rate=args.base_keep_rate,
+                          drop_loc=eval(args.drop_loc),
+                          num_classes=args.nb_classes,
+                          drop_rate=args.drop,
+                          pos_drop_rate=args.pos_drop_rate,
+                          attn_drop_rate=args.attn_drop_rate,
+                          drop_path_rate=args.drop_layers_rate,
+                          drop_block_rate=args.drop_block_rate,
+                          fuse_token=args.fuse_token,
+                          img_size=(args.input_size, args.input_size),
+                          feature_extractor=True,
+                          pos_embedding = args.pos_encoding_flag)
+    else:
+        raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
+     
+    feature_extractor = create_model(model_name=args.feature_extractor,
+                                    pretrained=False,  
+                                    **dict(model_args))
+    
+    if args.feature_extractor=='resnet18.tv_in1k' or args.feature_extractor=='resnet50.tv_in1k':
+        if feature_extractor.feature_info[-1]['module'] == 'layer3':
+            num_chs = feature_extractor.feature_info[-1]['num_chs']
+    elif args.feature_extractor=='vgg16.tv_in1k':
+        num_chs = feature_extractor.feature_info[-1]['num_chs']
+    elif args.feature_extractor=='densenet169.tv_in1k':
+        num_chs = feature_extractor.feature_info[-1]['num_chs']
+    elif args.feature_extractor=='efficientnet_b3':
+        num_chs = list(feature_extractor.named_parameters())[-1][1].shape[0]
+        
+    return feature_extractor, num_chs
+
+def Pretrained_Feature_Extractures(feature_extractor, args) -> str: 
+    """Selects the right checkpoint for the selected feature extractor model.
+    
+    Args:
+        feature_extractor (str): Name of the feature extractor model.
+        args (**): Arguments from the parser.
+    Returns:
+        str: Path to the checkpoint of the feature extractor model.
+    """
+    checkpoints = ['https://download.pytorch.org/models/resnet18-5c106cde.pth', 
+                   'https://download.pytorch.org/models/resnet50-19c8e357.pth', 
+                   'https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth',
+                   'https://dl.fbaipublicfiles.com/deit/deit_base_patch16_224-b5f2ef4d.pth',
+                   'https://download.pytorch.org/models/vgg16-397923af.pth',
+                   'https://download.pytorch.org/models/densenet169-b2777c0a.pth',
+                   'https://github.com/rwightman/pytorch-image-models/releases/download/v0.1-weights/efficientnet_b3_ra2-cf984f9c.pth',
+                   'Feature_Extractors/Pretrained_EViTs/evit-0.7-img224-deit-s.pth',
+                   'Feature_Extractors/Pretrained_EViTs/evit-0.7-fuse-img224-deit-s.pth'
+                   ]
+    
+    if feature_extractor == "resnet18.tv_in1k":
+        return checkpoints[0]
+    elif feature_extractor == "resnet50.tv_in1k":
+        return checkpoints[1]
+    elif feature_extractor == "deit_small_patch16_224":
+        return checkpoints[2]
+    elif feature_extractor == "deit_base_patch16_224":
+        return checkpoints[3]
+    elif feature_extractor == "vgg16.tv_in1k":
+        return checkpoints[4]
+    elif feature_extractor == "densenet169.tv_in1k":
+        return checkpoints[5]
+    elif feature_extractor == "efficientnet_b3":
+        return checkpoints[6]
+    elif feature_extractor == "deit_small_patch16_shrink_base":
+        if args.base_keep_rate == 0.7:
+            return checkpoints[7] if not args.fuse_token else checkpoints[8]
+        else:
+            raise ValueError(f"At the moment, we are only using the pretrained weights for EViT with base_keep_rate = 0.7.\n \
+                Please, set base_keep_rate = 0.7 in the parser.\n Other pretrained weights will be added soon.")
+    else:
+        raise ValueError(f"Invalid feature_extractor: {feature_extractor}. Must be 'resnet18.tv_in1k',\
+            'resnet50.tv_in1k', 'deit_small_patch16_224', 'deit_base_patch16_224', 'vgg16.tv_in1k', 'efficientnet' or 'deit_small_patch16_shrink_base'")
+        
+def Mask_Setup(mask):
+    """ This function transforms the a binary mask shape (Batch_size, 1, 224, 224) into a mask of shape (Batch_size, N).
+        If the Segmentation only contains zeros, the mask is transformed into a mask of ones.
+    
+    Args:
+        mask (torch.Tensor):Binary mask of shape (Batch_size, 1, 224, 224).
+    Returns:
+        torch.tensor: Binary mask of shape (Batch_size, N).
+    """ 
+    mask = F.max_pool2d(mask, kernel_size=16, stride=16)  # Transform Mask into shape (Batch_size, 1, 14, 14)
+    mask = mask.reshape(mask.size(0), mask.size(2)*mask.size(3)) # Reshape mask to shape (Batch_size, N)
+    
+    for i in range (len(mask)):
+        if len(torch.unique(mask[i])) == 1:
+            mask[i] = torch.ones_like(mask[i])
+        
+    return mask
+        
+def EViT_Full_Fused_Attn_Map(x:torch.Tensor=None, 
+                            fuse_token:torch.Tensor=None,
+                            idxs:list=None, 
+                            N:int=196, 
+                            D:int=384,
+                            Batch_size:int=1) -> torch.Tensor:
+    """ This functions transforms the output of EViT into a full map of the embeddings. The full map wil have a shape of (Batch_size, N, D).
+        Where the innatentive tokens are filled with the fused token.
+        
+    Args:
+        x (torch.Tensor): EViT's output. Shape(Batch_Size, num_left_tokens, D). Defaults to None.
+        fuse_token (torch.Tensor): One of the fused tokens. Shape(Batch_size,D). Defaults to None.
+        idxs (list): List of the idxs "removal layer" of the attentive tokens in EViT. Defaults to None.
+        N (int): Original number of patches for a 224x224 image and 16x16 patches. Defaults to 196.
+        D (int): Dimension of the embeddings. Defaults to 384.
+        Batch_size (int): Batch_size. Defaults to 1.
+
+    Returns:
+        torch.Tensor: Full map of the embeddings. Shape(Batch_size, N, D). Where the innatentive tokens are filled with the fused token.
+    """
+
+    full_map = torch.zeros((Batch_size, N, D)).to(x.device) 
+    indexes = idxs[-1].unsqueeze(-1).expand(-1, -1, D).clone()
+    compl_idx = evit.complement_idx(idxs[-1], N)
+
+    full_map.scatter_(1, index=indexes, src=x)
+    full_map.scatter_(1, index=compl_idx.unsqueeze(-1).expand(-1, -1, D), src=fuse_token.unsqueeze(1).repeat(1, compl_idx.size(1), 1))
+
+    return full_map, compl_idx
+
 class MIL(nn.Module):
     
     def __init__(self, 
@@ -87,12 +346,8 @@ class MIL(nn.Module):
         self.evit_attn_tokens_idx = None 
         self.evit_inattn_tokens_idx = None
         self.count_tokens = 0
-        
-        if args.dataset_type == 'Skin':
-            self.classifier = MlpCLassifier(in_features=embedding_size, out_features=num_classes, dropout=dropout) 
-        elif args.dataset_type == 'Breast':
-            self.classifier = head(in_features=embedding_size, out_features=num_classes, dropout=dropout)  
-                
+        self.classifier = define_mil_classifier(args.dataset_type, embedding_size, num_classes, dropout)
+                        
     def activations_hook(self, grad):
         self.gradients = grad
         
@@ -152,18 +407,9 @@ class MIL(nn.Module):
                     for i in range(probs.size(0)):
                         pooled_probs.append(probs[i][int(torch.argmax(probs[i])/self.num_classes)])
                     pooled_probs = torch.stack(pooled_probs).to(self.device)
+                    
+            count_tokens_maxpooling(self, pooled_idxs)
             
-            # Count the number of times the cls_token or the fuse_tokens are selected as the most probable patch.            
-            if self.patch_extractor_model in deits_backbones:
-                self.count_tokens=(pooled_idxs==0).sum().item()  # Count the number of times the cls token is selected as the most probable patch.
-            elif self.patch_extractor_model in evits_backbones:
-                if self.args.fuse_token_filled and self.args.fuse_token: 
-                    _, evit_inattn_tokens_idx = self.get_evit_tokens_idx()
-                    pooled_idxs_exp = pooled_idxs.unsqueeze(1).expand(-1, evit_inattn_tokens_idx.shape[1])
-                    self.count_tokens = (evit_inattn_tokens_idx == pooled_idxs_exp).any(dim=1).sum().item()
-                if self.args.fuse_token and not self.args.fuse_token_filled:
-                    self.count_tokens=(pooled_idxs==self.num_patches-1).sum().item()
-
             return pooled_probs     
     
     def AvgPooling(self, representation):
@@ -235,18 +481,9 @@ class MIL(nn.Module):
                         _, indices = torch.topk(max_vals, topk) # Get the indices of the top-k values
                         pooled_probs.append(torch.mean(probs[i][indices], dim=0)) # Compute the mean of the top-k values
                     pooled_probs = torch.stack(pooled_probs).to(self.device)
-                                        
-            # Count the number of times the cls_token or the fuse_tokens are selected as the most probable patch.            
-            if self.patch_extractor_model in deits_backbones:
-                self.count_tokens=torch.sum(pooled_idxs==0).item() # Count the number of times the cls token is selected as the most probable patch.
-            elif self.patch_extractor_model in evits_backbones:
-                if self.args.fuse_token_filled and self.args.fuse_token: 
-                    _, evit_inattn_tokens_idx = self.get_evit_tokens_idx()
-                    pooled_idxs_exp=pooled_idxs.unsqueeze(2).expand(-1, -1, evit_inattn_tokens_idx.shape[1])
-                    self.count_tokens=(evit_inattn_tokens_idx.unsqueeze(1)==pooled_idxs_exp).any(dim=2).sum().item()
-                if self.args.fuse_token and not self.args.fuse_token_filled:
-                    self.count_tokens=torch.sum(pooled_idxs==self.num_patches-1).item() # Count the number of times the fuse token is selected as the most probable patch.
-                      
+            
+            count_tokens_topkpooling(self, pooled_idxs)                     
+                                                      
             return pooled_probs
         
     def MaskMaxPooling(self, representation, mask):
@@ -506,209 +743,3 @@ class InstanceMIL(MIL):
         x = torch.log(x)
     
         return x #(Batch_size, num_classes)
-
-def Define_Feature_Extractor(feature_extractor:str, 
-                             nb_classes:int,
-                             args) -> Union[nn.Module, int]:
-    """ This function defines the feature extractor model and returns the model.
-
-    Args:
-        feature_extractor (str): Name of the feature extractor model.
-        nb_classes (int): Number of classes.
-        args (_type_): Arguments.
-        
-    Raises:
-        NotImplementedError: If the model is not implemented.
-
-    Returns:
-        nn.Module: Feature extractor model.
-        int: Number of features.
-    """
-    
-    num_chs = 256
-    model_args = {}
-    
-    if args.feature_extractor == 'resnet18.tv_in1k':
-        """ feature_extractor = ResNet.ResNet(block=ResNet.BasicBlock, 
-                                          layers=[2, 2, 2], 
-                                          desired_output_size=(args.input_size // args.patch_size)) """            
-        model_args = dict(block=resnet.BasicBlock, 
-                          layers=[2, 2, 2], 
-                          desired_output_size=(args.input_size // args.patch_size),
-                          drop_rate=args.drop,
-                          drop_path_rate=args.drop_layers_rate,
-                          drop_block_rate=args.drop_block_rate,
-                          feature_extractor=True)
-    elif args.feature_extractor == 'resnet50.tv_in1k':
-        model_args = dict(block=resnet.Bottleneck, 
-                          layers=[3, 4, 6], 
-                          desired_output_size=(args.input_size // args.patch_size),
-                          drop_rate=args.drop,
-                          drop_path_rate=args.drop_layers_rate,
-                          drop_block_rate=args.drop_block_rate,
-                          feature_extractor=True)
-    elif args.feature_extractor == 'vgg16.tv_in1k': 
-        model_args = dict(cfg=[64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512],
-                          drop_rate=args.drop,
-                          feature_extractor=True)
-    elif args.feature_extractor == 'densenet169.tv_in1k':
-        model_args = dict(block_config=(6, 12, 32),
-                          drop_rate=args.drop,
-                          feature_extractor=True)
-    elif args.feature_extractor == 'efficientnet_b3':
-        model_args = dict(drop_rate=args.drop,  
-                          drop_path_rate=args.drop_layers_rate,
-                          feature_extractor=True,
-                          desired_output_size=(args.input_size // args.patch_size))
-    elif args.feature_extractor == 'deit_small_patch16_224':
-        num_chs = 384
-        model_args = dict(img_size=args.input_size,
-                          patch_size=args.patch_size,
-                          embed_dim=num_chs, 
-                          depth=12, 
-                          num_heads=6,
-                          drop_rate=args.drop,
-                          pos_drop_rate=args.pos_drop_rate,
-                          attn_drop_rate=args.attn_drop_rate,
-                          drop_path_rate=args.drop_layers_rate,
-                          drop_block_rate=args.drop_block_rate,
-                          feature_extractor=True,
-                          pos_embedding = args.pos_encoding_flag)
-    elif args.feature_extractor == 'deit_base_patch16_224':
-        num_chs = 768
-        model_args = dict(img_size=args.input_size,
-                          patch_size=args.patch_size,
-                          embed_dim=num_chs, 
-                          depth=12, 
-                          num_heads=12,
-                          drop_rate=args.drop,
-                          pos_drop_rate=args.pos_drop_rate,
-                          attn_drop_rate=args.attn_drop_rate,
-                          drop_path_rate=args.drop_layers_rate,
-                          drop_block_rate=args.drop_block_rate,                          
-                          feature_extractor=True,
-                          pos_embedding = args.pos_encoding_flag)
-    elif args.feature_extractor == 'deit_small_patch16_shrink_base':
-        num_chs = 384
-        model_args = dict(base_keep_rate=args.base_keep_rate,
-                          drop_loc=eval(args.drop_loc),
-                          num_classes=args.nb_classes,
-                          drop_rate=args.drop,
-                          pos_drop_rate=args.pos_drop_rate,
-                          attn_drop_rate=args.attn_drop_rate,
-                          drop_path_rate=args.drop_layers_rate,
-                          drop_block_rate=args.drop_block_rate,
-                          fuse_token=args.fuse_token,
-                          img_size=(args.input_size, args.input_size),
-                          feature_extractor=True,
-                          pos_embedding = args.pos_encoding_flag)
-    else:
-        raise NotImplementedError('This MIL implementation does not support that feature extractor...Yet!')
-     
-    feature_extractor = create_model(model_name=args.feature_extractor,
-                                    pretrained=False,  
-                                    **dict(model_args))
-    
-    if args.feature_extractor=='resnet18.tv_in1k' or args.feature_extractor=='resnet50.tv_in1k':
-        if feature_extractor.feature_info[-1]['module'] == 'layer3':
-            num_chs = feature_extractor.feature_info[-1]['num_chs']
-    elif args.feature_extractor=='vgg16.tv_in1k':
-        num_chs = feature_extractor.feature_info[-1]['num_chs']
-    elif args.feature_extractor=='densenet169.tv_in1k':
-        num_chs = feature_extractor.feature_info[-1]['num_chs']
-    elif args.feature_extractor=='efficientnet_b3':
-        num_chs = list(feature_extractor.named_parameters())[-1][1].shape[0]
-        
-    return feature_extractor, num_chs
-
-def Pretrained_Feature_Extractures(feature_extractor, args) -> str: 
-    """Selects the right checkpoint for the selected feature extractor model.
-    
-    Args:
-        feature_extractor (str): Name of the feature extractor model.
-        args (**): Arguments from the parser.
-    Returns:
-        str: Path to the checkpoint of the feature extractor model.
-    """
-    checkpoints = ['https://download.pytorch.org/models/resnet18-5c106cde.pth', 
-                   'https://download.pytorch.org/models/resnet50-19c8e357.pth', 
-                   'https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth',
-                   'https://dl.fbaipublicfiles.com/deit/deit_base_patch16_224-b5f2ef4d.pth',
-                   'https://download.pytorch.org/models/vgg16-397923af.pth',
-                   'https://download.pytorch.org/models/densenet169-b2777c0a.pth',
-                   'https://github.com/rwightman/pytorch-image-models/releases/download/v0.1-weights/efficientnet_b3_ra2-cf984f9c.pth',
-                   'Feature_Extractors/Pretrained_EViTs/evit-0.7-img224-deit-s.pth',
-                   'Feature_Extractors/Pretrained_EViTs/evit-0.7-fuse-img224-deit-s.pth'
-                   ]
-    
-    if feature_extractor == "resnet18.tv_in1k":
-        return checkpoints[0]
-    elif feature_extractor == "resnet50.tv_in1k":
-        return checkpoints[1]
-    elif feature_extractor == "deit_small_patch16_224":
-        return checkpoints[2]
-    elif feature_extractor == "deit_base_patch16_224":
-        return checkpoints[3]
-    elif feature_extractor == "vgg16.tv_in1k":
-        return checkpoints[4]
-    elif feature_extractor == "densenet169.tv_in1k":
-        return checkpoints[5]
-    elif feature_extractor == "efficientnet_b3":
-        return checkpoints[6]
-    elif feature_extractor == "deit_small_patch16_shrink_base":
-        if args.base_keep_rate == 0.7:
-            return checkpoints[7] if not args.fuse_token else checkpoints[8]
-        else:
-            raise ValueError(f"At the moment, we are only using the pretrained weights for EViT with base_keep_rate = 0.7.\n \
-                Please, set base_keep_rate = 0.7 in the parser.\n Other pretrained weights will be added soon.")
-    else:
-        raise ValueError(f"Invalid feature_extractor: {feature_extractor}. Must be 'resnet18.tv_in1k',\
-            'resnet50.tv_in1k', 'deit_small_patch16_224', 'deit_base_patch16_224', 'vgg16.tv_in1k', 'efficientnet' or 'deit_small_patch16_shrink_base'")
-        
-def Mask_Setup(mask):
-    """ This function transforms the a binary mask shape (Batch_size, 1, 224, 224) into a mask of shape (Batch_size, N).
-        If the Segmentation only contains zeros, the mask is transformed into a mask of ones.
-    
-    Args:
-        mask (torch.Tensor):Binary mask of shape (Batch_size, 1, 224, 224).
-    Returns:
-        torch.tensor: Binary mask of shape (Batch_size, N).
-    """ 
-    mask = F.max_pool2d(mask, kernel_size=16, stride=16)  # Transform Mask into shape (Batch_size, 1, 14, 14)
-    mask = mask.reshape(mask.size(0), mask.size(2)*mask.size(3)) # Reshape mask to shape (Batch_size, N)
-    
-    for i in range (len(mask)):
-        if len(torch.unique(mask[i])) == 1:
-            mask[i] = torch.ones_like(mask[i])
-        
-    return mask
-        
-def EViT_Full_Fused_Attn_Map(x:torch.Tensor=None, 
-                            fuse_token:torch.Tensor=None,
-                            idxs:list=None, 
-                            N:int=196, 
-                            D:int=384,
-                            Batch_size:int=1) -> torch.Tensor:
-    """ This functions transforms the output of EViT into a full map of the embeddings. The full map wil have a shape of (Batch_size, N, D).
-        Where the innatentive tokens are filled with the fused token.
-        
-    Args:
-        x (torch.Tensor): EViT's output. Shape(Batch_Size, num_left_tokens, D). Defaults to None.
-        fuse_token (torch.Tensor): One of the fused tokens. Shape(Batch_size,D). Defaults to None.
-        idxs (list): List of the idxs "removal layer" of the attentive tokens in EViT. Defaults to None.
-        N (int): Original number of patches for a 224x224 image and 16x16 patches. Defaults to 196.
-        D (int): Dimension of the embeddings. Defaults to 384.
-        Batch_size (int): Batch_size. Defaults to 1.
-
-    Returns:
-        torch.Tensor: Full map of the embeddings. Shape(Batch_size, N, D). Where the innatentive tokens are filled with the fused token.
-    """
-
-    full_map = torch.zeros((Batch_size, N, D)).to(x.device) 
-    indexes = idxs[-1].unsqueeze(-1).expand(-1, -1, D).clone()
-    compl_idx = evit.complement_idx(idxs[-1], N)
-
-    full_map.scatter_(1, index=indexes, src=x)
-    full_map.scatter_(1, index=compl_idx.unsqueeze(-1).expand(-1, -1, D), src=fuse_token.unsqueeze(1).repeat(1, compl_idx.size(1), 1))
-
-    return full_map, compl_idx
