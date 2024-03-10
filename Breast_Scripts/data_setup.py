@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Datas
 
 from torchvision import transforms
 import torchvision.transforms as transforms
+from torchvision.transforms import functional as TF
 from torchvision.datasets import ImageFolder
 
 from typing import Union
@@ -22,7 +23,7 @@ def Gray_PIL_Loader_Wo_He(path: str) -> Image.Image:
         Image.Image: loaded image.
     """
     image = Image.open(path)
-    return image.convert('L').resize((max(image.size),max(image.size)), resample=Image.BILINEAR)
+    return image.convert('L').resize((max(image.size),max(image.size)), resample=Image.BILINEAR) #return image.convert('L')
 
 def Gray_PIL_Loader(path: str) -> Image.Image:
     with open(path, 'rb') as f:
@@ -49,6 +50,27 @@ def Gray_to_RGB_Transform(x: torch.Tensor) -> torch.Tensor:
         torch.Tensor: RGB image.
     """
     return torch.cat([x, x, x], 0)
+
+def padding_image_to_square(image: torch.Tensor, min_size=224, padding_value=0) -> torch.Tensor:
+    """
+    Pads the input image tensor to have a square shape (same width and height) while maintaining aspect ratio.
+    
+    Args:
+        image (torch.Tensor): The input image tensor with shape (C, H, W).
+        min_size (int): Minimum size for the image after padding.
+        padding_value (int): Value to use for padding. Default is 0 (black).
+    
+    Returns:
+        torch.Tensor: Padded image tensor with square shape.
+    """
+    c, h, w = image.size()
+    max_side = max(h, w, min_size)
+    padding_left = (max_side - w) // 2
+    padding_right = max_side - w - padding_left
+    padding_top = (max_side - h) // 2
+    padding_bottom = max_side - h - padding_top
+    padding = (padding_left, padding_top, padding_right, padding_bottom)
+    return TF.pad(image, padding, padding_value, 'constant')
 
 def Train_Transform(input_size:int=224,
                     args=None) -> transforms.Compose:
@@ -101,9 +123,10 @@ def Test_Transform(input_size:int=224,
     t = []
     
     t.append(transforms.ToTensor())
+    #t.append(transforms.Lambda(padding_image_to_square))
     t.append(transforms.Resize([input_size, input_size], antialias=True))
     t.append(transforms.Lambda(Gray_to_RGB_Transform)) #t.append(transforms.Grayscale(num_output_channels=3)) 
-    
+
     return transforms.Compose(t)
   
 def Build_Datasets(data_path:str,
@@ -170,45 +193,36 @@ def Build_Datasets(data_path:str,
         
     return train_set, val_set
          
-def Get_TestLoader(data_path:str,
-                   input_size:int=224, 
-                   batch_size:int=64, 
-                   num_workers:int=0,
-                   args=None) -> DataLoader:
-    """This function returns the training, validation data loaders. 
-    In this case, there is no 'val' folder in the data path. Thus, we need to split the training set into training and validation sets.
-
+def Get_Testset(data_path:str,
+                input_size:int=224, 
+                args=None) -> DataLoader:
+    """This function returns the Test set. 
+    
     Args:
         dataset (torch.utils.data.Dataset): Dataset.
         input_size (int, optional): Input size for the model. Defaults to 224.
-        batch_size (int, optional): Batch size. Defaults to 64.
-        num_workers (int, optional): Number of workers. Defaults to 0.
         args (argparse.ArgumentParser, optional): Arguments. Defaults to None.
 
     Returns:
         DataLoader: Test data loader.
     """
     root = os.path.join(data_path)
-    test_loader = None
-    
+    test_path = None; test_set = None
+        
     if 'test' in os.listdir(root):
         test_path = os.path.join(root, 'test')
     elif 'test' not in os.listdir(root) and 'val' in os.listdir(root):
         test_path = os.path.join(root, 'val')
         print('No test folder found in the data path. Using the validation folder as the test folder.')
+    elif 'test' not in os.listdir(root) and 'val' not in os.listdir(root) and 'train' in os.listdir(root):
+        test_path = os.path.join(root, 'train')
+        print('No test folder (nor val folder) found in the data path. Using the training folder as the test folder.')
     else:
         ValueError('No test folder (nor val folder) found in the data path. Make sure the data path has a test folder.')
         
     test_transform = Test_Transform(input_size=input_size, args=args)
     
     test_set = ImageFolder(root=test_path, transform=test_transform, loader=Gray_PIL_Loader_Wo_He)
-    
-    test_loader = DataLoader(test_set,
-                            batch_size=batch_size,
-                            shuffle=False,
-                            num_workers=num_workers,
-                            pin_memory=(torch.cuda.is_available()),
-                            drop_last=False)
-    
-    return test_loader
+        
+    return test_set
                    

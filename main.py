@@ -108,7 +108,7 @@ def get_args_parser():
     parser.add_argument('--resume', default='', type=str, metavar='PATH')
     
     # Imbalanced dataset parameters
-    parser.add_argument('--class_weights', default='None', choices=['None', 'balanced', 'median'], type=str, 
+    parser.add_argument('--class_weights', default=None, choices=[None, 'balanced', 'median'], type=str, 
                         help="Class weights for loss function.")
     
     # Optimizer parameters 
@@ -386,7 +386,7 @@ def main(args):
     
     # Define the output directory
     output_dir = Path(args.output_dir)
-        
+    
     if args.data_path:
         n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad) 
         print(f"Number of parameters: {n_parameters}\n")
@@ -415,7 +415,7 @@ def main(args):
     if args.resume:
         
         # Load the finetuned model
-        utils.Load_Pretrained_MIL_Model(path=args.resume, model=model, args=args)
+        #utils.Load_Pretrained_MIL_Model(path=args.resume, model=model, args=args)
         
         if args.visualize:
             print('******* Starting visualization process. *******')
