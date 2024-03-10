@@ -57,6 +57,8 @@ def train_step(model: torch.nn.Module,
                         parameters=model.parameters(), create_graph=is_second_order)
         else:
             loss.backward() # 3. Backward pass
+            # if max_norm is not None:
+            #     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm) # 4. Clip gradients
             optimizer.step() # 5. Update weights
             
         if args.print_grad_stats:
