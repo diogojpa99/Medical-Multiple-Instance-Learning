@@ -107,12 +107,12 @@ def train_step(model: torch.nn.Module,
 
 @torch.no_grad()
 def evaluation(model: torch.nn.Module, 
-                dataloader: torch.utils.data.DataLoader, 
-                criterion: torch.nn.Module, 
-                device: torch.device,
-                epoch: int,
-                wandb=print,
-                args=None):
+               dataloader: torch.utils.data.DataLoader, 
+               criterion: torch.nn.Module, 
+               device: torch.device,
+               epoch: int,
+               wandb=print,
+               args=None):
     
     # Switch to evaluation mode
     model.eval()

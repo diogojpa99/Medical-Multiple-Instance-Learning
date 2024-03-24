@@ -1,17 +1,57 @@
 import os
 from PIL import Image
 import numpy as np
+import cv2
 
 import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Dataset
 
 from torchvision import transforms
 import torchvision.transforms as transforms
-from torchvision.transforms import functional as TF
+from torchvision.transforms import functional as F
 from torchvision.datasets import ImageFolder
 
 from typing import Union
 
+#global std, mean
+
+def define_mean_std(dataset:str) -> tuple:
+    """This function defines the mean and standard deviation for the dataset.
+
+    Args:
+        dataset (str): Dataset name.
+
+    Returns:
+        tuple: mean, std.
+    """
+    
+    # if dataset=="MIAS_CLAHE-mass_normal":
+    #     return 0.3229, 0.2409
+    # elif dataset=="MIAS_CLAHE-benign_malignant":
+    #     return 0.3254, 0.2403
+    # elif dataset=="CBIS_CLAHE-benign_malignant":
+    #     return 0.3040, 0.2678
+    
+    if dataset=="DDSM_CLAHE-mass_normal":
+        print('Mean and std for DDSM_CLAHE-mass_normal: 0.2333, 0.2410')
+        return 0.2333, 0.2410
+    elif dataset=="DDSM+CBIS_CLAHE-mass_normal":
+        print('Mean and std for DDSM+CBIS_CLAHE-mass_normal: 0.2333, 0.2410')
+        return 0.2505, 0.2497
+    elif dataset=="DDSM_CLAHE-benign_malignant":
+        print('Mean and std for DDSM_CLAHE-benign_malignant: 0.2693, 0.2504')
+        return 0.2693, 0.2504
+    elif dataset=="DDSM+CBIS_CLAHE-benign_malignant":
+        print('Mean and std for DDSM+CBIS_CLAHE-benign_malignant: 0.2807, 0.2567')
+        return 0.2807, 0.2567
+    elif dataset=="DDSM+CBIS+MIAS_CLAHE-benign_malignant":
+        print('Mean and std for DDSM+CBIS+MIAS_CLAHE-benign_malignant: 0.2820, 0.2563')
+        return 0.2820, 0.2563
+    else:
+        ValueError('Dataset not found.')
+        
+    return None, None
+        
 def Gray_PIL_Loader_Wo_He(path: str) -> Image.Image:
     """This function opens the image using PIL and converts it to grayscale.
     Then resizes the grayscale image to a square shape (width equals height) using bilinear interpolation  
@@ -23,7 +63,19 @@ def Gray_PIL_Loader_Wo_He(path: str) -> Image.Image:
         Image.Image: loaded image.
     """
     image = Image.open(path)
-    return image.convert('L').resize((max(image.size),max(image.size)), resample=Image.BILINEAR) #return image.convert('L')
+    return image.convert('L').resize((max(image.size),max(image.size)), resample=Image.BILINEAR)
+
+def Gray_PIL_Loader_Wo_He_No_Resize(path: str) -> Image.Image:
+    """This function opens the image using PIL and converts it to grayscale.
+    Then resizes the grayscale image to a square shape (width equals height) using bilinear interpolation  
+
+    Args:
+        path (str): Path to the image.
+
+    Returns:
+        Image.Image: loaded image.
+    """
+    return Image.open(path).convert('L')
 
 def Gray_PIL_Loader(path: str) -> Image.Image:
     with open(path, 'rb') as f:
@@ -51,10 +103,31 @@ def Gray_to_RGB_Transform(x: torch.Tensor) -> torch.Tensor:
     """
     return torch.cat([x, x, x], 0)
 
-def padding_image_to_square(image: torch.Tensor, min_size=224, padding_value=0) -> torch.Tensor:
+class CLAHE_Transform:
+    def __init__(self, clip_limit):
+        self.clip_limit = clip_limit
+        
+    def __call__(self, img):
+        clahe = cv2.createCLAHE(clipLimit=self.clip_limit, tileGridSize=(8, 8))
+        return Image.fromarray((clahe.apply(np.array(img)).astype(np.float32) / 255.0)) 
+
+def apply_clahe(x:Image.Image) -> Image.Image:
+    """Apply CLAHE to the input image.
+
+    Args:
+        image (PIL): The input image.
+
+    Returns:
+        _type_: _description_
     """
-    Pads the input image tensor to have a square shape (same width and height) while maintaining aspect ratio.
-    
+    clahe = cv2.createCLAHE(clipLimit=0.02, tileGridSize=(8, 8))
+    return Image.fromarray(clahe.apply(np.array(x)))
+
+def padding_image_one_side(x:torch.Tensor) -> torch.Tensor:
+    """
+    Pad the input image tensor to make it square.
+    We only want to pad the side with the least amount of information.
+        
     Args:
         image (torch.Tensor): The input image tensor with shape (C, H, W).
         min_size (int): Minimum size for the image after padding.
@@ -63,17 +136,85 @@ def padding_image_to_square(image: torch.Tensor, min_size=224, padding_value=0) 
     Returns:
         torch.Tensor: Padded image tensor with square shape.
     """
-    c, h, w = image.size()
+
+    min_size=224
+    padding_value=0
+    
+    c, h, w = x.size()
     max_side = max(h, w, min_size)
-    padding_left = (max_side - w) // 2
-    padding_right = max_side - w - padding_left
+    padding_left = max_side - w
+    padding_right = max_side - w 
     padding_top = (max_side - h) // 2
     padding_bottom = max_side - h - padding_top
-    padding = (padding_left, padding_top, padding_right, padding_bottom)
-    return TF.pad(image, padding, padding_value, 'constant')
+    
+    # Compute the side that has the least amount of information
+    column_sums = x.sum(dim=[0, 1])
+    values, idx = torch.topk(column_sums, k=int(0.10 * column_sums.size(-1)), largest=False, sorted=True)
+    dist_left = torch.mean(idx.float()) # Average distance from the columns with the least amount of information to the left edge
+    dist_right = torch.mean((torch.ones(len(idx))*x.size(-1)) - idx.float()) # Average distance from the columns with the least amount of information to the right edge
 
-def Train_Transform(input_size:int=224,
-                    args=None) -> transforms.Compose:
+    if dist_left < dist_right:
+        padding = (padding_left, 0, 0, 0)
+    else:
+        padding = (0, 0, padding_right, 0)
+                
+    return F.pad(x, padding, padding_value, 'constant')
+
+def transform_images_to_left(x:torch.Tensor) -> torch.Tensor:
+    """Transforms the input image tensor to the left.
+
+    Args:
+        x (torch.Tensor): The input image tensor.
+
+    Returns:
+    """
+    # Compute the side that has the least amount of information
+    column_sums = x.sum(dim=[0, 1])
+    values, idx = torch.topk(column_sums, k=int(0.10 * column_sums.size(-1)), largest=False, sorted=True)
+    dist_left = torch.mean(idx.float()) # Average distance from the columns with the least amount of information to the left edge
+    dist_right = torch.mean((torch.ones(len(idx))*x.size(-1)) - idx.float()) # Average distance from the columns with the least amount of information to the right edge
+
+    # If the breast is on the right side then perform an horizontal flip
+    if dist_left < dist_right:
+        x = F.hflip(x)
+                
+    return x
+
+def General_Img_Transform(t:list, input_size:int=224, args=None) -> transforms.Compose:
+    """_summary_
+
+    Args:
+        t (list): _description_
+        input_size (int, optional): _description_. Defaults to 224.
+        args (_type_, optional): _description_. Defaults to None.
+
+    Returns:
+        transforms.Compose: _description_
+    """
+    if args.breast_clahe: 
+        clahe_transform = CLAHE_Transform(clip_limit=args.clahe_clip_limit)
+        #t.append(transforms.Lambda(apply_clahe))
+        t.append(clahe_transform)
+        
+    t.append(transforms.ToTensor())
+    
+    if args.breast_padding: 
+        t.append(transforms.Lambda(padding_image_one_side))
+        
+    mean, std = define_mean_std(args.dataset)
+    t.append(transforms.Normalize(mean=[mean], std=[std]))
+    
+    t.append(transforms.Resize([224, 224], antialias=args.breast_antialias))
+        
+    if args.breast_transform_left:
+        t.append(transforms.Lambda(transform_images_to_left))
+        
+    if args.breast_transform_rgb:           
+        t.append(transforms.Lambda(Gray_to_RGB_Transform)) #t.append(transforms.Grayscale(num_output_channels=3))
+        
+    return t
+
+def Train_Transform(input_size:int=224, args=None) -> transforms.Compose:
     """Builds the data transformation pipeline.
     Since the dataset is grayscale, we need to convert it to RGB.
     The grayscale images are converted to RGB by concatenating the grayscale image to itself 3 times.
@@ -92,20 +233,21 @@ def Train_Transform(input_size:int=224,
     """
     t = []
     
-    t.append(transforms.RandomVerticalFlip())
-    t.append(transforms.RandomHorizontalFlip())
-    t.append(transforms.Resize([input_size, input_size], antialias=True))
-    t.append(transforms.RandomCrop(input_size, padding=0)), 
-    t.append(transforms.ToTensor())
-    t.append(transforms.Lambda(Gray_to_RGB_Transform)) #t.append(transforms.Grayscale(num_output_channels=3))
-    #t.append(transforms.RandomRotation(10))
-    
+    t = General_Img_Transform(t, input_size, args)
+        
+    # Data augmentation
     if args.breast_strong_aug:
-        t.append(transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)))
-        t.append(transforms.ColorJitter(brightness=0.1, contrast=0.1))
-
-    #t.append(transforms.RandomResizedCrop(input_size, scale=(0.8, 1.0)))
-    #t.append(transforms.GaussianBlur(kernel_size=23, sigma=(0.1, 2.0)))
+        if not args.breast_transform_left:
+            t.append(transforms.RandomHorizontalFlip())
+        t.append(transforms.RandomVerticalFlip())
+        t.append(transforms.RandomRotation(7))
+        #t.append(transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)))
+        #t.append(transforms.RandomCrop(input_size, padding=0))
+        #t.append(transforms.ColorJitter(brightness=0.1, contrast=0.1))
+        #t.append(transforms.RandomAffine(degrees=0, translate=(0.0, 0.1)))
+        #t.append(transforms.RandomAffine(degrees=0, scale=(0.8, 1.2)))
+        #t.append(transforms.RandomResizedCrop(input_size, scale=(0.8, 1.0)))
+        #t.append(transforms.GaussianBlur(kernel_size=23, sigma=(0.1, 2.0)))
         
     return transforms.Compose(t)
 
@@ -121,12 +263,7 @@ def Test_Transform(input_size:int=224,
         transforms.Compose: Transformation pipeline for the test/validation set.
     """
     t = []
-    
-    t.append(transforms.ToTensor())
-    #t.append(transforms.Lambda(padding_image_to_square))
-    t.append(transforms.Resize([input_size, input_size], antialias=True))
-    t.append(transforms.Lambda(Gray_to_RGB_Transform)) #t.append(transforms.Grayscale(num_output_channels=3)) 
-
+    t = General_Img_Transform(t, input_size, args)
     return transforms.Compose(t)
   
 def Build_Datasets(data_path:str,
@@ -171,9 +308,12 @@ def Build_Datasets(data_path:str,
     val_transform = Test_Transform(input_size=input_size, args=args)
     
     # Build the datasets
-    if args.loader=='Gray_PIL_Loader_Wo_He':
+    if args.breast_loader=='Gray_PIL_Loader_Wo_He':
         train_set = ImageFolder(root=train_path, transform=train_transform, loader=Gray_PIL_Loader_Wo_He)
         val_set = ImageFolder(root=val_path, transform=val_transform, loader=Gray_PIL_Loader_Wo_He)
+    elif args.breast_loader=='Gray_PIL_Loader_Wo_He_No_Resize':
+        train_set = ImageFolder(root=train_path, transform=train_transform, loader=Gray_PIL_Loader_Wo_He_No_Resize)
+        val_set = ImageFolder(root=val_path, transform=val_transform, loader=Gray_PIL_Loader_Wo_He_No_Resize)
     else:
         train_set = ImageFolder(root=train_path, transform=train_transform, loader=Gray_PIL_Loader)
         val_set = ImageFolder(root=val_path, transform=val_transform, loader=Gray_PIL_Loader)
@@ -222,7 +362,12 @@ def Get_Testset(data_path:str,
         
     test_transform = Test_Transform(input_size=input_size, args=args)
     
-    test_set = ImageFolder(root=test_path, transform=test_transform, loader=Gray_PIL_Loader_Wo_He)
-        
+    if args.breast_loader=='Gray_PIL_Loader_Wo_He':
+        test_set = ImageFolder(root=test_path, transform=test_transform, loader=Gray_PIL_Loader_Wo_He)
+    elif args.breast_loader=='Gray_PIL_Loader_Wo_He_No_Resize':
+        test_set = ImageFolder(root=test_path, transform=test_transform, loader=Gray_PIL_Loader_Wo_He_No_Resize)
+    else:
+        test_set = ImageFolder(root=test_path, transform=test_transform, loader=Gray_PIL_Loader)
+            
     return test_set
                    
