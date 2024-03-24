@@ -375,7 +375,6 @@ def main(args):
         print(f"[Info] Loading the finetuned model from:\n'{args.resume}'")
         utils.Load_Pretrained_MIL_Model(path=args.resume, model=model, args=args)
 
-    feature_extractor.to(device)
     model.to(device)
     
     model_ema = None 
